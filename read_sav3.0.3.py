@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, exc
 from sqlalchemy.sql import text
 from sqlalchemy import MetaData, Table,Column,ForeignKey
 from sqlalchemy.dialects.mysql import TINYTEXT, ENUM
+import ConfigParser
 import logging
 import re, glob, os.path, sys, inspect
 import pandas as pd
@@ -20,6 +21,21 @@ import sys, traceback
 logging.basicConfig(filename='error.log',filemode='w', level=logging.WARN)
 logger = logging.getLogger('sqlalchemy.engine')
 #~ logger.setLevel(logging.WARN)
+
+Config = ConfigParser.ConfigParser()
+Config.read('./config.ini')
+dbuser = Config.get('SQL','user')
+dbpasswd = Config.get('SQL','passwd')
+dbhost = Config.get('SQL','host')
+dbname = Config.get('SQL','db')
+
+def SQL_connect() :
+
+	engine = create_engine('mysql://{user}:{passwd}@{host}/{db}'.format(host = dbhost,
+		user = dbuser,
+		passwd = dbpasswd,
+		db = dbname))
+	return engine
 
 def line_no():
 	"""Returns the current line number in our program."""
@@ -156,14 +172,6 @@ def extract_health(health_vars,table) :
 		health_table = health_table.join(temp_health_table,how="outer")
 	return table
 	
-
-def SQL_connect() :
-
-	engine = create_engine('mysql://{user}:{passwd}@{host}/{db}'.format(host = 'localhost',
-		user = 'python',
-		passwd = 'mcmmpython',
-		db = 'mcmdev'))
-	return engine
 
 engine = SQL_connect()
 

@@ -1,7 +1,8 @@
 #!/usr/bin/python -w
 from sqlalchemy import create_engine, inspect, exc, MetaData
 from sqlalchemy.ext.automap import automap_base
-
+import logging
+import ConfigParser
 from Tkinter import *
 from os import geteuid
 import pdb 
@@ -11,16 +12,33 @@ except ImportError:
 	import getpass
 	pwd = None
 
+debug = True
+
+if debug :
+	logging.basicConfig(filename='debug.log',filemode='w', level=logging.DEBUG)
+else :
+	logging.basicConfig(filename='gui-error.log',filemode='w', level=logging.ERROR)
+
+Config = ConfigParser.ConfigParser()
+Config.read('./config.ini')
+dbuser = Config.get('SQL','user')
+dbpasswd = Config.get('SQL','passwd')
+dbhost = Config.get('SQL','host')
+dbname = Config.get('SQL','db')
 
 def SQL_connect() :
 
-	engine = create_engine('mysql://{user}:{passwd}@{host}/{db}'.format(host = 'localhost',
-		user = 'python',
-		passwd = 'mcmmpython',
-		db = 'mcmdev'))
+	engine = create_engine('mysql://{user}:{passwd}@{host}/{db}'.format(host = dbhost,
+		user = dbuser,
+		passwd = dbpasswd,
+		db = dbname))
 	return engine
 
-engine = SQL_connect()
+try :
+	engine = SQL_connect()
+except :
+	logging.error("failed to connect to MySQL database %s at %s") % (db,localhost)
+
 
 root = Tk()
 frame = Frame(root)
