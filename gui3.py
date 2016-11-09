@@ -1,5 +1,7 @@
 #!/usr/bin/python -w
-from sqlalchemy import create_engine, inspect, exc 
+from sqlalchemy import create_engine, inspect, exc, MetaData
+from sqlalchemy.ext.automap import automap_base
+
 from Tkinter import *
 from os import geteuid
 import pdb 
@@ -80,10 +82,17 @@ class Application(Frame):
 		for i in selection :
 			entry = self.optionbox.get(i)
 			selection_list.append(entry)
-		pdb.set_trace()
 		print selection_list
 		return selection_list
 		
+		
+
+metadata = MetaData()
+metadata.reflect(engine)
+base = automap_base(metadata=metadata)
+base.prepare(engine,reflect=True)
+
+pdb.set_trace()
 
 App = Application(master=root)
 App.mainloop()
