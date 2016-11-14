@@ -1,6 +1,7 @@
 #!/usr/bin/python -w
 from sqlalchemy import create_engine, inspect, exc, MetaData
 from sqlalchemy.ext.automap import automap_base
+from sqlalchemy.orm import Session
 import logging
 import ConfigParser
 from Tkinter import *
@@ -109,6 +110,10 @@ metadata = MetaData()
 metadata.reflect(engine)
 base = automap_base(metadata=metadata)
 base.prepare(engine,reflect=True)
+
+session = Session(engine)
+
+## session.query(base.classes.memberbase).filter(base.classes.memberbase.BIRTHYEAR >= 1980).one()
 
 pdb.set_trace()
 
