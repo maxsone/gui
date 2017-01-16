@@ -56,11 +56,12 @@ metadata = MetaData()
 metadata.reflect(engine)
 base = automap_base(metadata=metadata)
 base.prepare(engine,reflect=True)
+
 # setup relationships
 
 tables = StringVar()
 
-tables.set(' '.join(base.classes.keys()))
+tables.set(' '.join(sorted(base.classes.keys())))
 
 selected_tables = []
 
@@ -110,13 +111,17 @@ class Application(Frame):
 		self.createWidgets()
 
 	def export_selection(self):
-		try: 
-			f = self.file_save_as()
-			export(f)
-		except IOError as e: 
-			tkMessageBox.showinfo("Error","something went wrong somewhere: %s" % e) 
+		try :
+			 export(self.outdir)
+		except :
+			try: 
+				self.outdir = self.file_save_as()
+				export(self.outdir)
+			except IOError as e: 
+				tkMessageBox.showinfo("Error","something went wrong somewhere: %s" % e) 
 
 	def select_list(self):
+		pdb.set_trace()
 		selection_list = list()
 		self.selection = self.optionbox.curselection()
 		for i in self.selection :
@@ -138,6 +143,7 @@ class Application(Frame):
 		
 def tables_set(query,db_tables):
 	global selected_tables
+	pdb.set_trace()
 	selected_tables = [base.classes[i] for i in db_tables]
 	for i in db_tables :
 		query.add_entity(base.classes[i])
@@ -145,9 +151,20 @@ def tables_set(query,db_tables):
 
 	
 def export(f):
+	Join = App.joined.get()
 	for table in selected_tables:
 		filename = "%s/%s.csv" % (f, table.__table__.description)
-		records = session.query(table).all()
+		if Join: 
+			pdb.set_trace()
+			other_tables = selected_tables[:] ## makin a copy because we're gonna modify this
+			other_tables.remove(table)
+			try:
+				pdb.set_trace()
+				records = session.query(table).join(other_tables[0]).all()
+				
+			except exc.SQLAlchemyError, e:
+				tkMessageBox.showinfo("Error:", e) 
+				return e
 		with open(filename, 'wb') as tablefile : 
 			out = csv.writer(tablefile)
 			out.writerow([column.name for column in table.__mapper__.columns])
