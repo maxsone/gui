@@ -39,7 +39,9 @@ def SQL_connect() :
 	engine = create_engine('mysql://{user}:{passwd}@{host}/{db}'.format(host = dbhost,
 		user = dbuser,
 		passwd = dbpasswd,
-		db = dbname))
+		db = dbname),
+		#~ echo=True
+		)
 	return engine
 
 try :
@@ -53,15 +55,22 @@ frame = Frame(root)
 
 # What tables (surveys) do we have in the db?
 metadata = MetaData()
-metadata.reflect(engine)
+metadata.reflect(bind=engine)
 base = automap_base(metadata=metadata)
+
 base.prepare(engine,reflect=True)
+
+tabledict = {}
 
 # setup relationships
 
 tables = StringVar()
-
-tables.set(' '.join(sorted(base.classes.keys())))
+tablenames = []
+tablenames = base.classes.keys()
+tabledict = { x: base.classes[x] for x in tablenames }
+tablenames.remove('memberbase')
+tables.set(' '.join(sorted(tablenames)))
+ # more easily refer to tables by name, mainly used in debug
 
 selected_tables = []
 
@@ -113,6 +122,7 @@ class Application(Frame):
 	def export_selection(self):
 		try :
 			 export(self.outdir)
+			 select_list(self)
 		except :
 			try: 
 				self.outdir = self.file_save_as()
@@ -121,7 +131,7 @@ class Application(Frame):
 				tkMessageBox.showinfo("Error","something went wrong somewhere: %s" % e) 
 
 	def select_list(self):
-		pdb.set_trace()
+
 		selection_list = list()
 		self.selection = self.optionbox.curselection()
 		for i in self.selection :
@@ -143,28 +153,37 @@ class Application(Frame):
 		
 def tables_set(query,db_tables):
 	global selected_tables
-	pdb.set_trace()
+
 	selected_tables = [base.classes[i] for i in db_tables]
 	for i in db_tables :
 		query.add_entity(base.classes[i])
 		
-
+def find_joint_membership() :
+	tablenames = [table.__table__.description for table in selected_tables]
+	q = session.query()
+	pdb.set_trace()
+	return joint_members
+	
 	
 def export(f):
 	Join = App.joined.get()
 	for table in selected_tables:
 		filename = "%s/%s.csv" % (f, table.__table__.description)
 		if Join: 
-			pdb.set_trace()
+			CODE2s=session.query(tabledict['memberbase'].CODE2).join(*selected_tables)
+			#~ member_set = find_joint_membership()
 			other_tables = selected_tables[:] ## makin a copy because we're gonna modify this
 			other_tables.remove(table)
 			try:
 				pdb.set_trace()
-				records = session.query(table).join(other_tables[0]).all()
+				records = session.query(table).join(tabledict['memberbase']).join(*other_tables).all()
+				# try against CODE2s? one by one?
 				
 			except exc.SQLAlchemyError, e:
 				tkMessageBox.showinfo("Error:", e) 
 				return e
+		else :
+			records = session.query(table)
 		with open(filename, 'wb') as tablefile : 
 			out = csv.writer(tablefile)
 			out.writerow([column.name for column in table.__mapper__.columns])
