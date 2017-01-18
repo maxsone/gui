@@ -2,14 +2,13 @@
 from sqlalchemy import create_engine, inspect, exc, MetaData
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
-from pandas import DataFrame
+from pandas import DataFrame, read_sql_query, ExcelWriter
 import logging
 import ConfigParser
 from Tkinter import *
 import tkMessageBox
-from tkFileDialog import askdirectory
+from tkFileDialog import asksaveasfilename
 from os import geteuid, path
-import csv
 import pdb 
 try:
 	import pwd
@@ -144,7 +143,7 @@ class Application(Frame):
 		self.JOIN.pack()
 		
 	def file_save_as(self):
-		f = askdirectory()
+		f = asksaveasfilename(defaultextension='.xlsx')
 		if f is None: # askdirectory return `None` if dialog closed with "cancel".
 			tkMessageBox.showinfo("Error","Must select a directory") 
 			return
@@ -167,29 +166,30 @@ def find_joint_membership() :
 	
 def export(f):
 	Join = App.joined.get()
+	filename = f
+	writer = ExcelWriter(filename)
+				
+	if Join:
+		CODE2s=session.query(tabledict['memberbase'].CODE2).join(*selected_tables)
 	for table in selected_tables:
-		filename = "%s/%s.csv" % (f, table.__table__.description)
+		sheetname = "%s" % table.__table__.description
 		if Join: 
-			CODE2s=session.query(tabledict['memberbase'].CODE2).join(*selected_tables)
-			#~ member_set = find_joint_membership()
 			other_tables = selected_tables[:] ## makin a copy because we're gonna modify this
 			other_tables.remove(table)
 			try:
-				pdb.set_trace()
-				records = session.query(table).join(tabledict['memberbase']).join(*other_tables).all()
-				# try against CODE2s? one by one?
-				
+				records = session.query(table).join(tabledict['memberbase']).join(*other_tables)
+				# try against CODE2s? one by one?		
 			except exc.SQLAlchemyError, e:
 				tkMessageBox.showinfo("Error:", e) 
 				return e
 		else :
 			records = session.query(table)
-		with open(filename, 'wb') as tablefile : 
-			out = csv.writer(tablefile)
-			out.writerow([column.name for column in table.__mapper__.columns])
-			out.writerows([[ getattr(curr, column.name) for column in table.__mapper__.columns ] for curr in records ])
+		#make this into a pandas dataframe, because of manageability of dfs, and pandas nice excel methods
+		df = read_sql_query(records.statement,engine)
+		pdb.set_trace()
+		df.to_excel(writer,sheet_name=sheetname)
+	writer.save()
 	tkMessageBox.showinfo("Alert:","Selected data has been written to %s" % f) 
-	pdb.set_trace()
 	session.close()
 	root.quit
 
@@ -200,9 +200,6 @@ def join(query,db_tables):
 		query = query.join(base.classes[i])		
 			
 	
-
-
-
 
 session = Session(engine)
 
