@@ -4,7 +4,7 @@ import pdb
 import getopt
 import numpy
 from sqlalchemy import types 
-from sqlalchemy import create_engine, exc 
+from sqlalchemy import engine_from_config, exc 
 from sqlalchemy.sql import text
 from sqlalchemy import MetaData, Table,Column,ForeignKey
 from sqlalchemy.dialects.mysql import TINYTEXT, ENUM
@@ -24,17 +24,16 @@ logger = logging.getLogger('sqlalchemy.engine')
 
 Config = ConfigParser.ConfigParser()
 Config.read('./config.ini')
-dbuser = Config.get('SQL','user')
-dbpasswd = Config.get('SQL','passwd')
-dbhost = Config.get('SQL','host')
-dbname = Config.get('SQL','db')
+
+
+sqlsettings = dict(Config.items('sqlalchemy'))
 
 def SQL_connect() :
-
-	engine = create_engine('mysql://{user}:{passwd}@{host}/{db}'.format(host = dbhost,
-		user = dbuser,
-		passwd = dbpasswd,
-		db = dbname))
+	try:
+		engine = engine_from_config( sqlsettings )
+	except exc.SQLAlchemyError, e:
+		print e
+		exit
 	return engine
 
 def line_no():
@@ -118,7 +117,10 @@ def main(argv):
 			table_structure(table)
 	
 	if health_table.any().any() :
-		health_table.to_sql('health',engine,if_exists='replace',index=True,dtype={'CODE2':types.String(10)})
+		try : 
+			health_table.to_sql('health',engine,if_exists='replace',index=True,dtype={'CODE2':types.String(10)})
+		except exc.SQLAlchemyError, e:
+			logger.error(e)
 	return True
 	
 def health_vals() :
@@ -248,11 +250,11 @@ def build_table(filename,table):
 	try: 
 		schema = build_schema(table)
 	except ValueError, e: 
-		print str(e)
+		logger.error(str(e))
 	return table,tablename,schema
 
 def readfile(filename):
-	with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99) as sNp :
+	with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99,rawMode=False,ioUtf8=True) as sNp :
 		try :
 			table = pd.DataFrame(sNp.to_structured_array())
 		except ValueError, e :
@@ -284,16 +286,18 @@ def readfile(filename):
 			logger.error("DataError: Line %s: %s for %s" % (line_no(), filename, str(e)) )
 		except exc.IntegrityError, e:
 			logger.error("Integrity Error: Line %s: %s for %s" % (line_no(), str(e)))
+		except exc.SQLAlchemyError, e:
+			logger.error("SQLAlchemy Error: Line %s: %s" % (line_no(), str(e)))
 
-			print '-'*60
-			traceback.print_exc(file=sys.stdout)
-			print '-'*60
+			#~ print '-'*60
+			#~ traceback.print_exc(file=sys.stdout)
+			#~ print '-'*60
 		except AttributeError, e :
 			logger.error("Attribute Error: Line %s: %s for %s" % (line_no(), filename, str(e)) )
 
-			print '-'*60
-			traceback.print_exc(file=sys.stdout)
-			print '-'*60
+			#~ print '-'*60
+			#~ traceback.print_exc(file=sys.stdout)
+			#~ print '-'*60
 		#~ pdb.set_trace()
 		if table.index.name == 'CODE2' and success:
 			return tablename
