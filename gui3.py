@@ -1,8 +1,10 @@
 #!/usr/bin/python -w
-from sqlalchemy import create_engine, inspect, exc, MetaData
+from sqlalchemy import engine_from_config, inspect, exc, MetaData
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.expression import join as sqljoin 
 from pandas import DataFrame, read_sql_query, ExcelWriter
+from pandas import lib as pdlib
 import logging
 import ConfigParser
 from Tkinter import *
@@ -10,6 +12,10 @@ import tkMessageBox
 from tkFileDialog import asksaveasfilename
 from os import geteuid, path
 import pdb 
+import sys
+
+sys.defaultencoding = 'utf-8'
+
 try:
 	import pwd
 except ImportError:
@@ -28,25 +34,23 @@ else :
 
 Config = ConfigParser.ConfigParser()
 Config.read('./config.ini')
-dbuser = Config.get('SQL','user')
-dbpasswd = Config.get('SQL','passwd')
-dbhost = Config.get('SQL','host')
-dbname = Config.get('SQL','db')
+
+
+
+sqlsettings = dict(Config.items('sqlalchemy'))
 
 def SQL_connect() :
-
-	engine = create_engine('mysql://{user}:{passwd}@{host}/{db}'.format(host = dbhost,
-		user = dbuser,
-		passwd = dbpasswd,
-		db = dbname),
-		#~ echo=True
-		)
+	try:
+		engine = engine_from_config( sqlsettings )
+	except exc.SQLAlchemyError, e:
+		print e
 	return engine
+
 
 try :
 	engine = SQL_connect()
 except :
-	logging.error("failed to connect to MySQL database %s at %s") % (db,localhost)
+	logging.error("failed to connect to MySQL database %s at %s" % (sqlsettings['sqlalchemy.dbname'],sqlsettings['sqlalchemy.url']))
 
 
 root = Tk()
@@ -67,8 +71,16 @@ tables = StringVar()
 tablenames = []
 tablenames = base.classes.keys()
 tabledict = { x: base.classes[x] for x in tablenames }
+
+#tablenames is used to populate menu, shouldn't have direct access
 tablenames.remove('memberbase')
+
+#we're going to want to be able to reference this.
+memberbase = base.classes['memberbase'] 
+
+#set this in the app, it wants a space seperated list because suddenly we're in bash?
 tables.set(' '.join(sorted(tablenames)))
+
  # more easily refer to tables by name, mainly used in debug
 
 selected_tables = []
@@ -88,26 +100,43 @@ def return_query():
 class Application(Frame):
 
 	def createWidgets(self):
-		self.joined = IntVar()
 		self.Header_text = Label(self,text="MCM Database Interface")
 		self.QUIT = Button(self)
 		self.QUIT["text"] = "QUIT"
 		self.QUIT["fg"]   = "red"
 		self.QUIT["command"] =  self.quit
-		self.JOIN = Checkbutton(self,text="select only common respondents",variable=self.joined)
-		self.EXPORT = Button(self)
+
+		self.inner = IntVar()
+		self.JOIN = Checkbutton(self,text="select only common respondents",variable=self.inner)
+		self.JOIN.select()
+		
+		self.EXPORT = Button(self) #button sends selection to Application.export_selection()
 		self.EXPORT["text"] = "export selection"
 		self.EXPORT["command"] = self.export_selection
+		
 		self.options = Frame(self)
 		self.optiontext = Label(self.options,text="Select tables from which to include data:")
 		self.optionbox = Listbox(self.options,listvariable=tables, selectmode=MULTIPLE)
 		self.SELECT = Button(self.options, text="Select", command=self.select_list)
 		self.optionbox.pack()
 		self.optiontext.pack()
-		self.options.pack({"side":"right"})
-		self.QUIT.pack({"side": "left"})
-		self.SELECT.pack({"side": "left"})
-
+		self.options.pack({"side":"left"})
+		
+		self.QUIT.pack({"side": "right"})
+		
+		self.SELECT.pack({"side": "right"})
+		
+	def memberbase_selectors(self) :
+		memberbase_column = StringVar()
+		self.member_args = {}
+		self.member_select = OptionMenu(self,memberbase_column,*memberbase.__table__.columns.keys())
+		self.member_select.pack()
+		entry = Entry(self).pack({"side":"left"})
+		if memberbase_column.get() :
+			if self.Entry.get() :
+				member_args[memberbase_column.get()] = self.Entry.get()
+				self.member_select.pack()		
+	
 	def update_widget(self, options, labeltext):
 		ttk.Label(self.options, text=labeltext)
 		self.optionbox = options
@@ -125,85 +154,127 @@ class Application(Frame):
 		except :
 			try: 
 				self.outdir = self.file_save_as()
+				
 				export(self.outdir)
 			except IOError as e: 
 				tkMessageBox.showinfo("Error","something went wrong somewhere: %s" % e) 
 
 	def select_list(self):
-
 		selection_list = list()
 		self.selection = self.optionbox.curselection()
 		for i in self.selection :
 			entry = self.optionbox.get(i)
 			selection_list.append(entry)
-		tables_set(q,selection_list)
+		tables_set(selection_list)
+		if  self.JOIN.winfo_ismapped():
+			pass
+		else :
+			self.selected_options()
+			
+	def resolveconflict(self):
+		pdb.set_trace()
+		if self.joint.get() == 1 and self.inner.get() == 0:
+			self.inner.set(1)
+			tkMessageBox.showinfo("Alert","It is very rarely desired to have merged datasets containg all data ('FULL OUTER JOIN').  If you are certain this is what you want, please contact the database adminstrator.") 
+		
+	def selected_options(self):
+
+		joint = [('joint',1),('seperate',0)]
+		self.joint = IntVar()
+		self.joint.set('0')
+		for text, val in joint:
+			self.JOINT = Radiobutton(self,text=text,value=val,variable=self.joint,command=self.resolveconflict)
+			self.JOINT.pack({'side':'right'})	
+		
 		self.SELECT.pack_forget()
 		self.optiontext.pack_forget()
-		self.EXPORT.pack({"side":"left"})
+		self.EXPORT.pack({"side":"right"})
 		self.JOIN.pack()
+		self.memberbase_selectors()
 		
 	def file_save_as(self):
 		f = asksaveasfilename(defaultextension='.xlsx')
-		if f is None: # askdirectory return `None` if dialog closed with "cancel".
+		if not f: # askdirectory return `None` if dialog closed with "cancel".
 			tkMessageBox.showinfo("Error","Must select a directory") 
-			return
+			pass
 		else :
 			return f
 		
-def tables_set(query,db_tables):
+def tables_set(db_tables):
 	global selected_tables
 
 	selected_tables = [base.classes[i] for i in db_tables]
-	for i in db_tables :
-		query.add_entity(base.classes[i])
+
 		
 def find_joint_membership() :
 	tablenames = [table.__table__.description for table in selected_tables]
 	q = session.query()
-	pdb.set_trace()
 	return joint_members
 	
 	
 def export(f):
-	Join = App.joined.get()
+
+	Inner = App.inner.get()
+	Joint = App.joint.get()
 	filename = f
-	writer = ExcelWriter(filename)
-				
-	if Join:
-		CODE2s=session.query(tabledict['memberbase'].CODE2).join(*selected_tables)
-	for table in selected_tables:
-		sheetname = "%s" % table.__table__.description
-		if Join: 
+	if filename == None :
+		pass
+	# using xlsxwriter because it handles unicode better
+	writer = ExcelWriter(filename,engine='xlsxwriter',options={'encoding':'unicode'})
+	if len(selected_tables) == 0 :
+		App.select_list()
+
+	if not Joint: 
+		if Inner :
+			pdb.set_trace()
+			CODE2s = session.query(memberbase.CODE2).join(*selected_tables)
+		for table in selected_tables:
+			sheetname = "%s" % table.__table__.description
 			other_tables = selected_tables[:] ## makin a copy because we're gonna modify this
 			other_tables.remove(table)
-			try:
-				records = session.query(table).join(tabledict['memberbase']).join(*other_tables)
-				# try against CODE2s? one by one?		
-			except exc.SQLAlchemyError, e:
-				tkMessageBox.showinfo("Error:", e) 
-				return e
-		else :
-			records = session.query(table)
-		#make this into a pandas dataframe, because of manageability of dfs, and pandas nice excel methods
-		df = read_sql_query(records.statement,engine)
-		pdb.set_trace()
-		df.to_excel(writer,sheet_name=sheetname)
+			if Inner :
+				records = session.query(table).filter(table.CODE2.in_(CODE2s))
+			else :
+				records = session.query(table)
+			#make this into a pandas dataframe, because of manageability of dfs, and pandas nice excel methods
+			df = read_sql_query(records.statement,engine,index_col="CODE2")
+			df.to_excel(writer,index='false',sheet_name=sheetname)
+	else :
+		records = qjoin(selected_tables)
+		#~ if filter :
+
+		df = read_sql_query(records.statement,engine,index_col="CODE2")
+		df.to_excel(writer,index='false')
+
+
 	writer.save()
 	tkMessageBox.showinfo("Alert:","Selected data has been written to %s" % f) 
 	session.close()
 	root.quit
 
+def qfilter(filter_expressions):
+	query = session.query(memberbase.CODE2)
+	for expression in filter_expressions :
+		query = query.filter(expression)
+	return filterquery
 			
-def join(query,db_tables):
-	db_tables.pop(0)
-	for i in db_tables :
-		query = query.join(base.classes[i])		
-			
+def qjoin(db_tables):
+	tables = db_tables[:]
+	firsttable = tables.pop(0)
+	query = session.query(firsttable,*tables)
+
+	for i in tables :
+		try: 
+			query = query.join(i, i.CODE2==firsttable.CODE2)
+		except AttributeError, e:
+			print str(e)
+	
+	return query
 	
 
 session = Session(engine)
 
-## session.query(base.classes.memberbase).filter(base.classes.memberbase.BIRTHYEAR >= 1980).one()
+## session.query(memberbase).filter(memberbase.BIRTHYEAR >= 1980).one()
 
 q = session.query()
 App = Application(master=root)
