@@ -299,7 +299,7 @@ def build_table(filename,table):
 		## now remove nono-conforming column names, such as 'ID.format'
 		cols = [col for col in table.columns if ( col.endswith('SUM') or ( not col.startswith('Q') and col.upper() != 'CODE2') )]
 		table.drop(cols,inplace = True, axis=1 )
-		if cols[0]: 
+		if len(cols) > 0:
 			logger.info	("Columns %s omited from %s because they contained internal or sensitive data" % (cols,filename))
 
 	else :
@@ -344,6 +344,7 @@ def makemetadata(schema,tablename):
 		else :
 			table = Table(tablename, meta, 
 				*[Column(column, schema[column]) if column != 'CODE2' else Column(column, schema[column], primary_key = True) for column in schema.keys()]
+				
 				)
 		return table
 	else :
