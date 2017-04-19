@@ -1,7 +1,7 @@
 #!/usr/bin/python -w
-from sqlalchemy import engine_from_config, inspect, exc, MetaData
+from sqlalchemy import engine_from_config, exc, MetaData
 from sqlalchemy.ext.automap import automap_base
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql.expression import join as sqljoin 
 from pandas import DataFrame, read_sql_query, compat, ExcelWriter, read_excel
 from pandas import lib as pdlib 
@@ -12,7 +12,7 @@ import tkMessageBox
 from tkFileDialog import asksaveasfilename
 from os import geteuid, path
 import pdb 
-import sys, glob
+import sys, glob, inspect
 import regex as re
 
 sys.defaultencoding = 'utf-8'
@@ -24,8 +24,21 @@ except ImportError:
 	pwd = None
 import unittest
 
+####
+# useful debug stuff
+
 debug = True
 debugdir = path.realpath(__file__)
+def line_no():
+	"""Returns the current line number in our program."""
+	return inspect.currentframe().f_back.f_lineno
+
+if debug:
+	def excepthook(type, value, traceback):
+		pdb.set_trace()
+	import traceback
+	import sys
+	sys.excepthook = excepthook
 
 
 if debug :
@@ -102,38 +115,55 @@ class Application(Frame):
 
 	def createWidgets(self):
 		self.Header_text = Label(self,text="MCM Database Interface")
+		
+		self.Left=Frame(self)
+		self.Right=Frame(self)
+		self.Left.grid(column=0,row=1)
+		self.Right.grid(column=1,row=1)
 
-		#inside the 'admin' frame
-		self.admin=Frame(self,borderwidth=1)
-		self.admin.grid(column=0,row=50)
-		self.QUIT = Button(self.admin)
+		#inside the 'bottom' frame
+		self.bottom=Frame(self,borderwidth=1)
+		self.bottom.grid(column=0,row=50,columnspan=2)
+		self.QUIT = Button(self.bottom)
 		self.QUIT["text"] = "QUIT"
 		self.QUIT["fg"]   = "red"
 		self.QUIT["command"] =  self.quit
-		self.QUIT.grid(column=20,sticky=SE)
-		self.EXPORT = Button(self.admin) #button sends selection to Application.export_selection()
+		self.QUIT.grid(row=0,column=1)
+		self.EXPORT = Button(self.bottom) #button sends selection to Application.export_selection()
 		self.EXPORT["text"] = "export selection"
 		self.EXPORT["command"] = self.export_selection
+		self.EXPORT.grid(column=0,row=0)
 
+
+		# inside the 'tables' frame
+		self.tables = Frame(self.Left,borderwidth=1)
+		self.optiontext = Label(self.tables,text="Select tables from which to include data:")
+		self.optionbox = Listbox(self.tables,listvariable=tables, selectmode=MULTIPLE)
+		self.SELECT = Button(self.tables, text="Select", command=self.select_list)
+		self.SELECT.grid(row=3,column=0)
+		self.optionbox.grid(row=2, column=0)
+		self.optiontext.grid(row=1, column=0)
+		self.tables.grid(row=1, column=0, rowspan=len(tablenames)+2)
 		
 		# inside the 'constraints' frame
-		self.constraints = Frame(self,borderwidth=1)
+		self.constraints = Frame(self.Right,borderwidth=1)
 		self.inner = IntVar()
 		self.JOIN = Checkbutton(self.constraints,text="select only common respondents",variable=self.inner)
 		self.JOIN.select()
-		joint = [('joint',1),('seperate',0)]
-		self.joint = IntVar()
-		self.joint.set('0')
+		self.JOIN.grid(row=3,column=0)
 		colcount = 0
 		
 		# inside the 'seperateFrame' frame (used to space radiobuttons)
 		self.seperateFrame = Frame(self.constraints)
+		joint = [('joint',1),('seperate',0)]
+		self.joint = IntVar()
+		self.joint.set('0')
 		for text, val in joint:
 			self.JOINT = Radiobutton(self.seperateFrame,text=text,value=val,variable=self.joint,command=self.resolveconflict) #check that both joint and combine are not checked
 			self.JOINT.grid(row=0,column=colcount,sticky=W)
 			colcount+=1
 		self.seperateFrame.grid(row=5,sticky=W)
-		self.JOIN.grid(row=7,column=0,sticky=W)
+
 
 		# inside the 'members' frame (inside the 'constraints' frame)
 		self.members = Frame(self.constraints,borderwidth=1)
@@ -141,24 +171,19 @@ class Application(Frame):
 		self.constrainmembersButton = Checkbutton(self.members,variable=self.constrainmembers,command=self.memberbase_selectors,text="Constrain selection by memberbase characteristics")
 		self.constrainmembersButton.grid(column=0,sticky=W)
 		self.members.grid(column=0,sticky=W)
-
-		# inside the 'tables' frame
-		self.tables = Frame(self,borderwidth=1)
-		self.optiontext = Label(self.tables,text="Select tables from which to include data:")
-		self.optionbox = Listbox(self.tables,listvariable=tables, selectmode=MULTIPLE)
-		self.SELECT = Button(self.tables, text="Select", command=self.select_list)
-		self.SELECT.grid(row=3,column=0)
-		self.optionbox.grid(row=2, column=0)
-		self.optiontext.grid(row=1, column=0)
-		self.tables.grid(row=1, column=0, rowspan=len(tablenames)+2)		
+		self.m_selectors = []
+		self.selectors_count = 0
+		
+		
 		# inside the 'presets' frame'
-		self.presets = Frame(self,borderwidth=1)
+		self.presets = Frame(self.Left,borderwidth=1)
 		self.predefined=IntVar()
-		#~ Label(self.members,)
+		
+		# top selection menu
 		self.PREDEF = Radiobutton(self,text='Use data from these tables',value=0,variable=self.predefined,command=self.showpredef)
 		self.PREDEF.grid(column=0,row=0)
 		self.PREDEF = Radiobutton(self,text='Use predefined topic sets',value=1,variable=self.predefined,command=self.showpredef)
-		self.PREDEF.grid(column=1,row=0,sticky=W)
+		self.PREDEF.grid(column=1,row=0,columnspan=2,sticky=W)
 				
 	def selectPreDef(self,subject):
 		tablesdict=self.matrix[subject]
@@ -182,29 +207,42 @@ class Application(Frame):
 			self.presets.grid_forget()
 			self.tables.grid(column=0,row=0)
 
-		
+	def add_mb_selector(self):
+		self.selectors_count +=1
+		self.m_s_button.grid_forget()
+		self.memberbase_selectors()
+
 	def memberbase_selectors(self) :
+		cur_row = self.selectors_count + 4
 		if self.constrainmembers.get() :
-			memberbase_column = StringVar()
+			varname = StringVar()
 			self.membercols = Frame(self.members,borderwidth=1)
-			self.member_args = {}
-			self.member_select = OptionMenu(self.membercols,memberbase_column,*memberbase.__table__.columns.keys())
-			self.member_select.grid(row=4,column=1)
-			entry = Entry(self.membercols).grid(row=4,column=2)
-			if memberbase_column.get() :
-				if self.Entry.get() :
-					member_args[memberbase_column.get()] = self.Entry.get()
-					self.member_select.grid(row=2,column=1)	
-			self.membercols.grid(row=2)
+			self.m_s_var = OptionMenu(self.membercols,varname,*memberbase.__table__.columns.keys())
+
+			#todo: assign *memberbase.__table__.columns.keys() to a var and remove one 
+			#every time it's used, since we can probably only assign var once
+			self.m_s_var.grid(row=cur_row,column=1)
+			self.m_s_entry = Entry(self.membercols)
+			##todo: should be a dropdown using memberbase.__table__.columns[key].type once key is selected
+			self.m_s_entry.grid(row=cur_row,column=2)
+			self.m_s_button = Button(self.membercols,text="add another",command=self.add_mb_selector)
+			self.m_s_button.grid(row=cur_row,column=3)
+			# add pairs of key/value to list, so we can find them pairwise later
+			# for reasons best known to tkinter, you can't get() on an OptionMenu, but you can on a StringVar assigned to it
+			self.m_selectors.append((varname,self.m_s_entry))
+			self.membercols.grid(row=cur_row)
 			self.members.grid(row=3)
-			self.JOIN.grid(column=1)
+			self.JOIN.grid(column=0)
 		else :
 			try :
 				self.membercols.grid_forget()
 			except (NameError, AttributeError):
 				pass
 
-	
+	def add_mb_selector(self):
+		self.selectors_count +=1
+		self.memberbase_selectors()
+		
 	#~ def update_widget(self, options, labeltext):
 		#~ ttk.Label(self.tables, text=labeltext)
 		#~ self.optionbox = options
@@ -223,12 +261,12 @@ class Application(Frame):
 		except :
 			try: 
 				self.outdir = self.file_save_as()
-				
 				export(self.outdir)
 			except IOError as e: 
 				tkMessageBox.showinfo("Error","something went wrong somewhere: %s" % e) 
 
 	def select_list(self):
+		self.constraints.grid(column=2)
 		selection_list = list()
 		self.selection = self.optionbox.curselection()
 		for i in self.selection :
@@ -238,7 +276,7 @@ class Application(Frame):
 		if  self.JOIN.winfo_ismapped():
 			pass
 		else :
-			self.selected_options()
+			pass
 			
 	def resolveconflict(self):
 
@@ -247,14 +285,16 @@ class Application(Frame):
 			tkMessageBox.showinfo("Alert","It is very rarely desired to have merged datasets containg all data ('FULL OUTER JOIN').  If you are certain this is what you want, please contact the database adminstrator.") 
 		
 	def selected_options(self):
-
-		
-		self.SELECT.grid_forget()
-		self.optiontext.grid_forget()
-		self.EXPORT.grid(column=0)
+		pdb.set_trace()
+		#~ self.SELECT.grid_forget()
+		#~ self.optiontext.grid_forget()
+		#~ self.EXPORT.grid(column=0)
 		self.memberbase_selectors()
 		
 	def file_save_as(self):
+		if debug == True:
+			f = '/home/elizabeth/development/output/out.xlsx'
+			return f
 		f = asksaveasfilename(defaultextension='.xlsx')
 		if not f: # askdirectory return `None` if dialog closed with "cancel".
 			tkMessageBox.showinfo("Error","Must select a directory") 
@@ -268,10 +308,10 @@ def tables_set(db_tables):
 	selected_tables = [base.classes[i] for i in db_tables]
 
 		
-def find_joint_membership() :
-	tablenames = [table.__table__.description for table in selected_tables]
-	q = session.query()
-	return joint_members
+#~ def find_joint_membership() :
+	#~ tablenames = [table.__table__.description for table in selected_tables]
+	#~ q = session.query()
+	#~ return joint_members
  
 
 def to_dict_dropna(data):
@@ -300,7 +340,9 @@ def matrix():
 	###  matrix.iloc[grouped.groups['???']].dropna(axis=1,how='all') # remove empty columns
 
 def export(f):
+	global selected_tables
 	presets = App.presets.winfo_ismapped()
+	member_filter = App.constrainmembers.get() 
 	Inner = App.inner.get()
 	Joint = App.joint.get()
 	filename = f
@@ -317,25 +359,51 @@ def export(f):
 			df = read_sql_query(tablequery.statement,engine,index_col="CODE2")
 			df.to_excel(writer,index='false',sheet_name=table)
 	else :
-		if len(selected_tables) == 0 :
-			App.select_list()
+		if len(selected_tables) > 0 :
+			pass
+		else :
+			pdb.set_trace()
+			#~ App.select_list()
+
 
 		if not Joint: 
+			filtered_members=session.query(memberbase.CODE2)
+			if member_filter :
+				filtered_members = qfilter()
 			if Inner :
-				CODE2s = session.query(memberbase.CODE2).join(*selected_tables)
+				filtered_members = filtered_members.join(*selected_tables)
 			if presets :
 				selected_tables = preset_columns
 			for table in selected_tables:
 				sheetname = "%s" % table.__table__.description
-				other_tables = selected_tables[:] ## makin a copy because we're gonna modify this
-				other_tables.remove(table)
-				if Inner :
-					records = session.query(table).filter(table.CODE2.in_(CODE2s))
+
+				if Inner or member_filter:
+					#~ if debug:
+						#~ try:
+							#~ pdb.set_trace()
+							#~ records = session.query(table).join(memberbase,memberbase.CODE2==table.CODE2).filter(memberbase.AGEGR == '6')
+						#~ except Exception as err:
+							#~ print traceback.format_exc()
+							#~ pdb.set_trace()
+							#~ print err.message
+					try :
+						records = session.query(table).filter(table.CODE2.in_(filtered_members))
+					except Exception as err:
+						pdb.set_trace()
+						logging.error('%s: %s' % (line_no(), err.message))
+					#~ records = session.query(table.__table__.alias()).join(filtered_members)
 				else :
 					records = session.query(table)
 				#make this into a pandas dataframe, because of manageability of dfs, and pandas nice excel methods
-				df = read_sql_query(records.statement,engine,index_col="CODE2")
-				df.to_excel(writer,index='false',sheet_name=sheetname)
+				try :
+					df = read_sql_query(records.statement,engine,index_col="CODE2")
+					df.to_excel(writer,index='false',sheet_name=sheetname)
+					if debug:
+						#~ pdb.set_trace()
+						logging.debug('using query: %s' % records.statement.compile(engine,compile_kwargs={"literal_binds": True}))
+				except Exception as err:
+					logging.error('%s: %s' % (line_no(), err.message))
+				
 		else :
 			records = qjoin(selected_tables)
 
@@ -376,20 +444,36 @@ def qpreset():
 			column_objs = [tableobj.CODE2] + column_objs
 			select_columns[tablekey]=column_objs
 		except KeyError, e:
-			logging.error("%s" % str(e))
-			pdb.set_trace()
-	pdb.set_trace()
+			logging.error("%s: %s" % (line_no(), str(e)))
+
 	return select_columns
 		#~ query = query.with_entities(*tablecolumns)
 		
 
 	return query
 
-def qfilter(filter_expressions):
-	query = session.query(memberbase.CODE2)
-	for expression in filter_expressions :
-		query = query.filter(expression)
-	return filterquery
+def qfilter():
+	filter_dict = {}
+	query = session.query(aliased(memberbase).CODE2)
+	for i in App.m_selectors:
+		try : 
+			key = i[0].get()
+			if key == '' :
+				key = None
+				continue
+		except :
+			continue
+		try: 
+			value = i[1].get()
+		except:
+			continue
+		filter_dict[key] = value
+	try :
+		query = query.filter_by(**filter_dict)
+	except:
+		pdb.set_trace()
+		# for like, >,< use  getattr(memberbase,key)
+	return query
 			
 def qjoin(db_tables):
 	tables = db_tables[:]
