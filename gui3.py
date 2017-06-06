@@ -34,11 +34,11 @@ def line_no():
 	return inspect.currentframe().f_back.f_lineno
 
 if debug:
-	def excepthook(type, value, traceback):
+	def excepthook(etype, value, traceback):
 		pdb.set_trace()
 	import traceback
 	import sys
-	sys.excepthook = excepthook
+	#~ sys.excepthook = excepthook
 
 
 if debug :
@@ -90,7 +90,7 @@ tabledict = { x: base.classes[x] for x in tablenames }
 tablenames.remove('memberbase')
 
 #we're going to want to be able to reference this.
-memberbase = base.classes['memberbase'] 
+MEMBERBASE = base.classes['memberbase'] 
 
 #set this in the app, it wants a space seperated list because suddenly we're in bash?
 tables.set(' '.join(sorted(tablenames)))
@@ -168,7 +168,7 @@ class Application(Frame):
 		# inside the 'members' frame (inside the 'constraints' frame)
 		self.members = Frame(self.constraints,borderwidth=1)
 		self.constrainmembers = IntVar()
-		self.constrainmembersButton = Checkbutton(self.members,variable=self.constrainmembers,command=self.memberbase_selectors,text="Constrain selection by memberbase characteristics")
+		self.constrainmembersButton = Checkbutton(self.members,variable=self.constrainmembers,command=self.MEMBERBASE_selectors,text="Constrain selection by MEMBERBASE characteristics")
 		self.constrainmembersButton.grid(column=0,sticky=W)
 		self.members.grid(column=0,sticky=W)
 		self.m_selectors = []
@@ -187,7 +187,7 @@ class Application(Frame):
 				
 	def selectPreDef(self,subject):
 		tablesdict=self.matrix[subject]
-		self.memberbase_selectors()
+		self.MEMBERBASE_selectors()
 		self.EXPORT.grid(column=1,row=0)
 		self.constraints.grid(column=1,row=1)
 		
@@ -210,20 +210,20 @@ class Application(Frame):
 	def add_mb_selector(self):
 		self.selectors_count +=1
 		self.m_s_button.grid_forget()
-		self.memberbase_selectors()
+		self.MEMBERBASE_selectors()
 
-	def memberbase_selectors(self) :
+	def MEMBERBASE_selectors(self) :
 		cur_row = self.selectors_count + 4
 		if self.constrainmembers.get() :
 			varname = StringVar()
 			self.membercols = Frame(self.members,borderwidth=1)
-			self.m_s_var = OptionMenu(self.membercols,varname,*memberbase.__table__.columns.keys())
+			self.m_s_var = OptionMenu(self.membercols,varname,*MEMBERBASE.__table__.columns.keys())
 
-			#todo: assign *memberbase.__table__.columns.keys() to a var and remove one 
+			#todo: assign *MEMBERBASE.__table__.columns.keys() to a var and remove one 
 			#every time it's used, since we can probably only assign var once
 			self.m_s_var.grid(row=cur_row,column=1)
 			self.m_s_entry = Entry(self.membercols)
-			##todo: should be a dropdown using memberbase.__table__.columns[key].type once key is selected
+			##todo: should be a dropdown using MEMBERBASE.__table__.columns[key].type once key is selected
 			self.m_s_entry.grid(row=cur_row,column=2)
 			self.m_s_button = Button(self.membercols,text="add another",command=self.add_mb_selector)
 			self.m_s_button.grid(row=cur_row,column=3)
@@ -241,7 +241,7 @@ class Application(Frame):
 
 	def add_mb_selector(self):
 		self.selectors_count +=1
-		self.memberbase_selectors()
+		self.MEMBERBASE_selectors()
 		
 	#~ def update_widget(self, options, labeltext):
 		#~ ttk.Label(self.tables, text=labeltext)
@@ -289,7 +289,7 @@ class Application(Frame):
 		#~ self.SELECT.grid_forget()
 		#~ self.optiontext.grid_forget()
 		#~ self.EXPORT.grid(column=0)
-		self.memberbase_selectors()
+		self.MEMBERBASE_selectors()
 		
 	def file_save_as(self):
 		if debug == True:
@@ -367,7 +367,7 @@ def export(f):
 
 
 		if not Joint: 
-			filtered_members=session.query(memberbase.CODE2)
+			filtered_members=session.query(MEMBERBASE.CODE2)
 			if member_filter :
 				filtered_members = qfilter()
 			if Inner :
@@ -381,7 +381,7 @@ def export(f):
 					#~ if debug:
 						#~ try:
 							#~ pdb.set_trace()
-							#~ records = session.query(table).join(memberbase,memberbase.CODE2==table.CODE2).filter(memberbase.AGEGR == '6')
+							#~ records = session.query(table).join(MEMBERBASE,MEMBERBASE.CODE2==table.CODE2).filter(MEMBERBASE.AGEGR == '6')
 						#~ except Exception as err:
 							#~ print traceback.format_exc()
 							#~ pdb.set_trace()
@@ -454,7 +454,7 @@ def qpreset():
 
 def qfilter():
 	filter_dict = {}
-	query = session.query(aliased(memberbase).CODE2)
+	query = session.query(aliased(MEMBERBASE).CODE2)
 	for i in App.m_selectors:
 		try : 
 			key = i[0].get()
@@ -472,7 +472,7 @@ def qfilter():
 		query = query.filter_by(**filter_dict)
 	except:
 		pdb.set_trace()
-		# for like, >,< use  getattr(memberbase,key)
+		# for like, >,< use  getattr(MEMBERBASE,key)
 	return query
 			
 def qjoin(db_tables):
@@ -490,7 +490,7 @@ def qjoin(db_tables):
 
 session = Session(engine)
 
-## session.query(memberbase).filter(memberbase.BIRTHYEAR >= 1980).one()
+## session.query(MEMBERBASE).filter(MEMBERBASE.BIRTHYEAR >= 1980).one()
 
 q = session.query()
 App = Application(master=root)

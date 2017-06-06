@@ -3,8 +3,8 @@
 import pdb
 import getopt
 import numpy
-from sqlalchemy import schema as alchemyschema
-from sqlalchemy import engine_from_config, exc, types
+from sqlalchemy import types 
+from sqlalchemy import create_engine, exc 
 from sqlalchemy.sql import text
 from sqlalchemy import MetaData, Table,Column,ForeignKey
 from sqlalchemy.dialects.mysql import TINYTEXT, ENUM
@@ -16,27 +16,25 @@ from csv import reader as csvreader
 import warnings
 import savReaderWriter
 import sys, traceback
-from tabulate import tabulate #hopefully only for debug
-
-sys.defaultencoding='utf-8'
 
 #~ SAVRW_DISPLAY_WARNS = warn
-logging.basicConfig(filename='error.log',filemode='w', level=logging.INFO)
+logging.basicConfig(filename='error.log',filemode='w', level=logging.WARN)
 logger = logging.getLogger('sqlalchemy.engine')
 #~ logger.setLevel(logging.WARN)
 
 Config = ConfigParser.ConfigParser()
 Config.read('./config.ini')
-xlwriter = pd.ExcelWriter('output/LookupFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
-
-sqlsettings = dict(Config.items('sqlalchemy'))
+dbuser = Config.get('sqlalchemy','user')
+dbpasswd = Config.get('sqlalchemy','password')
+dbhost = Config.get('sqlalchemy','host')
+dbname = Config.get('sqlalchemy','dbname')
 
 def SQL_connect() :
-	try:
-		engine = engine_from_config( sqlsettings )
-	except exc.SQLAlchemyError, e:
-		print e
-		exit
+
+	engine = create_engine('mysql://{user}:{passwd}@{host}/{db}'.format(host = dbhost,
+		user = dbuser,
+		passwd = dbpasswd,
+		db = dbname))
 	return engine
 
 def line_no():
@@ -106,45 +104,21 @@ def main(argv):
 		files.insert(0,memberbase_filename)
 		for filename in files :
 			try :
-				table = readut8file(filename)
+				tablename = readfile(filename)
+				if tablename :
+					built_tables.append(tablename)
 			except ValueError, e:
 				logger.error("Line %s : some kind of error in %s : %s" % (line_no(), filename, str(e)))
-				continue
 			except TypeError, e:
 				#~ pdb.set_trace()
 				logger.error("Line %s : some kind of error in %s : %s" % (line_no(), filename, str(e)))
-				continue
-			except exc.IntegrityError, e:
-				logger.error("Line %s : some kind of error in %s : %s" % (line_no(), filename, str(e)))
-				continue
-
-			if table is None:
-				pass
-			else :
-				try :
-					tablename = write_to_db(table,filename)
-				except exc.OperationalError, e:
-					pdb.set_trace()
-					print "%s failed.  Trying %s with backup parser\n" % (filename, filename)
-					table = readbadfile(filename)
-					if table is not None :
-						tablename = write_to_db(table,filename)
-					else : 
-						raise
-			if tablename :
-				built_tables.append(tablename)
 	#~ pdb.set_trace()
-	#~ if built_tables :
-		#~ for table in built_tables :
-			#~ table_structure(table)
+	if built_tables[0] :
+		for table in built_tables :
+			table_structure(table)
 	
 	if health_table.any().any() :
-		try : 
-			health_table.to_sql('health',engine,if_exists='replace',index=True,dtype={'CODE2':types.String(10)})
-		except exc.SQLAlchemyError, e:
-			logger.error(str(e))
-	xlwriter.save()
-	xlwriter.close()
+		health_table.to_sql('health',engine,if_exists='replace',index=True,dtype={'CODE2':types.String(10)})
 	return True
 	
 def health_vals() :
@@ -159,24 +133,16 @@ def health_vals() :
 
 def anonymize(table,tablename) :
 	memberbase = pd.read_sql_table('memberbase',engine,columns=['CODE1','CODE2']) 
+	memberbase['CODE1'] = memberbase['CODE1'].apply(str.strip)
+	table['ID.name'] = table['ID.name'].apply(str.strip)
 	if memberbase.any().any() :
 		print "trying to anonymize %s" % tablename
 		panel = memberbase[['CODE1','CODE2']]
-		joined_table = table.merge(panel,how='inner',right_on='CODE1',left_on="ID.name")
-	try: 
-		# ID.name which could not be matched to CODE1 in memberbase
-		failed = table[~table['ID.name'].isin(joined_table['ID.name'])]['ID.name'].to_frame()
-		## to_frame because this is just a series, which doesn't have a to_excel method
-		#~ pdb.set_trace()
-		failed.to_excel(xlwriter,sheet_name=tablename,columns=['ID.name'])
-	except:
-		pdb.set_trace()
-		logger.error("ur anonymizing code is borked somewhere man")
-		return False
-
-	#~ print "CODE2 lookup succeeded for %s records" % len(joined_table.index)
-	#~ print "CODE2 lookup failed for %s records" % len(failed.index)
-	return joined_table,failed	
+		joined_table = table.merge(panel,how='left',right_on='CODE1',left_on="ID.name")
+	failed = table[pd.isnull(joined_table['CODE2'])]
+	print "CODE2 lookup succeeded for %s records" % len(joined_table.index)
+	print "CODE2 lookup failed for %s records" % len(failed.index)
+	return table,failed	
 
 
 survey_code_reg = re.compile('([0-9]{2})_?([0-9]{2})')
@@ -214,28 +180,21 @@ def build_schema(table):
 	for column in table.select_dtypes(include=[numpy.number]) :
 		if column == 'CODE2' :
 			schema[column] = types.String(10)
+			#~ pdb.set_trace()
+		elif 3000 >= table[column].max() >= 1920 :
+			schema[column] = 'date'
 		else :
 			schema[column] = types.SmallInteger
 	for column in table.select_dtypes(exclude=[numpy.number]) :
 		if column == 'CODE2' :
 			schema[column] = types.String(10)
 		elif table[column].dtype.name == 'category' :
-			catlist = [str(x.upper()) if isinstance(x,basestring) else x for x in table[column].cat.categories.tolist()]
-			if '99' not in catlist :
-				catlist.append('99')
-			#remove duplicates
-			catlist = set(catlist)
-			#make it a list object again
-			catlist = list(catlist)
-			try :
-				schema[column] = types.Enum(*catlist)
-			except TypeError, e:
-				logger.info("%s has objecttype that can't be made enum: %s" % (column, str(e)))
-				schema[column] = types.SmallInteger
+			catlist = [str(x) for x in table[column].cat.categories.tolist()]
+			schema[column] = types.Enum(*catlist)
 		else :
 			schema[column] = types.Text
-	schema[u'CODE2'] = types.String(10)
-	#~ pdb.set_trace()
+	schema['CODE2'] = types.String(10)
+
 	return schema
 
 
@@ -244,81 +203,57 @@ def build_table(filename,table):
 	tablename=tablename.split('.')[0:-1]
 	if isinstance( tablename, (list, tuple)) :
 		tablename='_'.join(tablename)
-	
 	questions = [col for col in table.columns if col.startswith('Q')]
 
 	if not questions :
 		if tablename == 'memberbase' :
-			### Birthyear is being dropped because SysMis is badly encoded and causes choking
-			table.drop('BIRTHYEAR',inplace = True, axis=1 )
-			### CODE1 being stripped to facilitate matching w/out whitespace
-			table['CODE1'] = table['CODE1'].map(str.strip)
-	if 'Code2' in table:
-		table['CODE2'] = table.pop('Code2')
-		table['CODE2'] = table['CODE2'].astype('int').astype('str')
-		indexloc = table['CODE2'][table['CODE2'].duplicated()]
-		if len(indexloc) > 0:
-			logger.warn('dropping non-unique rows with CODE2 = %s from %s' % (indexloc.values,tablename))
-			table.drop_duplicates(subset=['CODE2'],keep=False,inplace=True)
-		table.set_index('CODE2', inplace=True)
+			if 'CODE2' in table:
+				table['CODE2'] = table['CODE2'].astype('int').astype('str')
+				table.set_index('CODE2',inplace=True)
+
+			return table, 'memberbase', None
+		else :
+			is_memberbase = raw_input('Does %s contain memberbase information? (y/n):' % filename)		
+			if is_memberbase.lower() == 'y' :
+				return table,'memberbase' 
+	# Generate a list of bad columns, names indicate data are not survey answers
+
+	if 'ID.format' in table :
+		table,failed = anonymize(table,tablename)
+	cols = [col for col in table.columns if ( col.endswith('SUM') or ( not col.startswith('Q') and col.upper() != 'CODE2') )]
+	if len(cols) > 0: 
+		table.drop(cols,inplace = True, axis=1 )
+		logger.info	("Columns %s omited from %s because they contained internal or sensitive data" % (cols,filename))
 	index = next(( col for col in table.columns if col.upper() == 'CODE2' ),None)
-	#~ pdb.set_trace()
 	for column in table.select_dtypes(include=[numpy.number]) :
 		if table[column].max() <= 99 :
 			try : 
 				table[column] = table[column].astype('int').astype('str').astype('category')
 			except ValueError, e :
 				logger.warn("%s in %s could not be set as pandas dtype 'category' because: %s" % (column, filename, str(e)) )
-			except TypeError, e:
-				logger.warn("%s in %s could not be set as pandas dtype 'category' because: %s" % (column, filename, str(e)) )
 		elif table[column].max < 32767 :
 			try :
 				table[column] = table[column].astype('short')
 			except :
 				logger.warn("%s in %s could not be set as pandas dtype 'short'" % (column, filename) )
-	#~ table.convert_objects()
-	
-	for column in table.select_dtypes(include=['object','O'],exclude=['int64','category']) :
-		## strip strings of millions of spaces
-		table[column] = table[column].map(str.strip)
-		try :
-			table[column] = table[column].astype('int')
-		except :
-			logger.info("%s cannot be set as int" % column)
-		if len(table[column].unique()) < 50 :
-			try : 
-				table[column] = table[column].astype('category')
-			except :
-				logger.info('could not cast %s as category data' % column)
-				
-	if tablename != 'memberbase': 
-
-		if 'ID.format' in table :
-			## merge after stripping spaces for easier matching
-			table,failed = anonymize(table,tablename)
-		## now remove nono-conforming column names, such as 'ID.format'
-		cols = [col for col in table.columns if ( col.endswith('SUM') or ( not col.startswith('Q') and col.upper() != 'CODE2') )]
-		table.drop(cols,inplace = True, axis=1 )
-		if len(cols) > 0:
-			logger.info	("Columns %s omited from %s because they contained internal or sensitive data" % (cols,filename))
+	if index == None :
+		logger.warn("table %s does not contain the indexing column 'CODE2' and cannot be combined with other tables" % tablename)
 
 	else :
 		if index and (index != 'CODE2' ):
 			table.rename(columns={index:'CODE2'},inplace=True)
         if 'CODE2' in table :
+			table['CODE2'] = table['CODE2'].astype('int').astype('str')
 			table.set_index('CODE2',inplace=True)
 	try: 
 		schema = build_schema(table)
 	except ValueError, e: 
-		logger.error(str(e))
-
-
+		print str(e)
 	return table,tablename,schema
 
-def readbadfile(filename):
-	with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99,rawMode=True,ioUtf8=False) as sNp :
+def readfile(filename):
+	with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99) as sNp :
 		try :
-			
 			table = pd.DataFrame(sNp.to_structured_array())
 		except ValueError, e :
 			logger.error("line %s: %s %s" % (line_no(), filename, str(e)) )
@@ -326,115 +261,40 @@ def readbadfile(filename):
 		except TypeError, e :
 			logger.error("line %s: %s %s" % (line_no(), filename, str(e)) )
 			return 
-	return table	
-
-cleanmeta = MetaData(bind=engine)
-cleanmeta.reflect()
-cleanmeta.drop_all()
-
-meta = MetaData(bind=engine)
-
-def makemetadata(schema,tablename):
-	if schema :
-		if tablename != 'memberbase' :
-			table = Table(tablename, meta, 
-				# these tables need CODE2 referencing memberbase.CODE2
-				*[Column(column, schema[column]) if column != 'CODE2' else Column(column, schema[column], ForeignKey('memberbase.CODE2'), primary_key = True) for column in schema.keys()]
-				)
-		else :
-			table = Table(tablename, meta, 
-				*[Column(column, schema[column]) if column != 'CODE2' else Column(column, schema[column], primary_key = True) for column in schema.keys()]
-				
-				)
-		return table
-	else :
-		return None
-
-def readut8file(filename):
-	with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99,rawMode=True,ioUtf8=True) as sNp :
-
-		try :
-			table = pd.DataFrame(sNp.to_structured_array())
-		except ValueError, e :
-			logger.error("line %s: %s %s" % (line_no(), filename, str(e)) )
-			return
-		except TypeError, e :
-			logger.error("line %s: %s %s" % (line_no(), filename, str(e)) )
-			return
-		except e:
-			 pdb.set_trace()
-			 return
-	return table
-	
-def write_to_db(table,filename):
-		metatable = None
 		logger.info("Attempting to process file %s" % filename)
+		#~ pdb.set_trace()
 		table,tablename,schema = build_table(filename,table)
-		metatable = makemetadata(schema,tablename)
-		if tablename != 'memberbase' :
-			if health_vars:
-				table_health = relevant_health(health_vars,tablename)
+		if tablename != 'memberbase' and health_vars:
+			table_health = relevant_health(health_vars,tablename)
+			if table_health : 
 				table = extract_health(table_health,table)
 		
 		success = False
-		
-		if metatable != None :
-			try: 
-				metatable.drop(checkfirst=True)
-			except exc.OperationalError, e:
-				print str(e)
-			except exc.IntegrityError, e:
-				pdb.set_trace()
-			try: 
-				metatable.create()
-			except exc.OperationalError, e:
-				print str(e)
-		else :
-			logger.error("No MetaData for table %s" % tablename)
 		metadata = None
 		if schema :
 			schema = schema
 		else :
 			schema = {'CODE2':types.String(10)}
 		try:
-			#~ pdb.set_trace()
-			table.to_sql(tablename,engine,schema=metadata,if_exists='append',index=True)
+
+			table.to_sql(tablename,engine,schema=metadata,if_exists='replace',index=True,dtype=schema)
 			success = True
-			print "file %s saved to database\n" % filename
-		except ValueError, e:
-			logger.error("ValueError: Line %s: %s for %s" % (line_no(), filename, str(e)) )
-			print "%s was not saved to db: see error.log for details" % filename
+			print "table %s saved to database\n" % filename
 		except pd.core.groupby.DataError, e:
 			logger.error("DataError: Line %s: %s for %s" % (line_no(), filename, str(e)) )
-			print "%s was not saved to db: see error.log for details" % filename
 		except exc.IntegrityError, e:
-			logger.error("Integrity Error: %s: %s " % (filename, str(e)[0:200]))
-			logger.warn("...attempting workaround; will try line by line")
-			num_rows = len(table)
-			#Iterate one row at a time
-			rowssuccess = 0
-			for i in range(num_rows):
-				try:
-					#Try inserting the row
-					table.iloc[i:i+1].to_sql(tablename,engine,schema=metadata,if_exists='append',index=True)
-					rowssuccess += 1
-				except exc.IntegrityError:
-					
-					logger.error("CODE2 = %s failed in %s.  Look for problem in memberbase" % (table.iloc[i:i+1].index.values,tablename))
-					#Ignore duplicates
-					pass
-			if rowssuccess > 0 :
-				print "%s partially saved to database" % tablename
-		except exc.SQLAlchemyError, e:
-			logger.error("SQLAlchemy Error: %s: %s" % (filename, str(e)))
-			print "%s was not saved to db: see error.log for details" % filename
-		except exc.OperationalError, e:
-			logger.error("Operational Error: Line %s: %s " % (line_no(), str(e)))
-			print "%s was not saved to db: see error.log for details" % filename
+			logger.error("Integrity Error: Line %s: %s for %s" % (line_no(), str(e)))
+
+			print '-'*60
+			traceback.print_exc(file=sys.stdout)
+			print '-'*60
 		except AttributeError, e :
 			logger.error("Attribute Error: Line %s: %s for %s" % (line_no(), filename, str(e)) )
-			print "%s was not saved to db: see error.log for details" % filename
 
+			print '-'*60
+			traceback.print_exc(file=sys.stdout)
+			print '-'*60
+		#~ pdb.set_trace()
 		if table.index.name == 'CODE2' and success:
 			return tablename
 
@@ -453,7 +313,5 @@ def table_structure(tablename):
 			print "table %s succesfully connected" % tablename
 		except exc.SQLAlchemyError, e:
 			logger.error( str(e))
-			
-
 
 main(sys.argv[1:])
