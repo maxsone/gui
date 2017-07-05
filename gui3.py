@@ -1,4 +1,3 @@
-#!/usr/bin/python -w
 from sqlalchemy import engine_from_config, exc, MetaData
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session, aliased
@@ -17,6 +16,7 @@ import regex as re
 
 sys.defaultencoding = 'utf-8'
 
+
 try:
 	import pwd
 except ImportError:
@@ -28,7 +28,8 @@ import unittest
 # useful debug stuff
 
 debug = True
-debugdir = path.realpath(__file__)
+scriptdir = path.realpath(path.dirname(sys.argv[0]))
+pdb.set_trace()
 def line_no():
 	"""Returns the current line number in our program."""
 	return inspect.currentframe().f_back.f_lineno
@@ -47,7 +48,7 @@ else :
 	logging.basicConfig(filename='gui-error.log',filemode='w', level=logging.ERROR)
 
 Config = ConfigParser.ConfigParser()
-Config.read('./config.ini')
+Config.read(scriptdir + '/config.ini')
 
 
 
