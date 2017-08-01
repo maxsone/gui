@@ -1,3 +1,4 @@
+#!/home/guest-user/.virtualenvs/dev/bin/python -d
 from sqlalchemy import engine_from_config, exc, MetaData
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session, aliased
@@ -27,9 +28,8 @@ import unittest
 ####
 # useful debug stuff
 
-debug = True
-scriptdir = path.realpath(path.dirname(sys.argv[0]))
-pdb.set_trace()
+debug = False
+scriptdir = path.dirname(path.realpath(sys.argv[0]))
 def line_no():
 	"""Returns the current line number in our program."""
 	return inspect.currentframe().f_back.f_lineno
@@ -46,6 +46,8 @@ if debug :
 	logging.basicConfig(filename='debug.log',filemode='w', level=logging.DEBUG)
 else :
 	logging.basicConfig(filename='gui-error.log',filemode='w', level=logging.ERROR)
+
+pdb.set_trace()
 
 Config = ConfigParser.ConfigParser()
 Config.read(scriptdir + '/config.ini')
