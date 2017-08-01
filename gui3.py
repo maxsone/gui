@@ -17,18 +17,20 @@ import regex as re
 
 sys.defaultencoding = 'utf-8'
 
+Config = ConfigParser.ConfigParser()
+Config.read(scriptdir + '/config.ini')
 
 try:
 	import pwd
 except ImportError:
 	import getpass
 	pwd = None
-import unittest
+#~ import unittest
 
 ####
 # useful debug stuff
 
-debug = False
+debug = Config.get('config','debug')
 scriptdir = path.dirname(path.realpath(sys.argv[0]))
 def line_no():
 	"""Returns the current line number in our program."""
@@ -39,7 +41,7 @@ if debug:
 		pdb.set_trace()
 	import traceback
 	import sys
-	#~ sys.excepthook = excepthook
+	sys.excepthook = excepthook
 
 
 if debug :
@@ -49,11 +51,6 @@ else :
 
 pdb.set_trace()
 
-Config = ConfigParser.ConfigParser()
-Config.read(scriptdir + '/config.ini')
-
-
-
 sqlsettings = dict(Config.items('sqlalchemy'))
 
 def SQL_connect() :
@@ -62,7 +59,6 @@ def SQL_connect() :
 	except exc.SQLAlchemyError, e:
 		print e
 	return engine
-
 
 try :
 	engine = SQL_connect()
