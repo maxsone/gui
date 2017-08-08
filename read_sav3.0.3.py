@@ -21,16 +21,18 @@ import progressbar
 
 sys.defaultencoding='utf-8'
 
+scriptdir = path.dirname(path.realpath(sys.argv[0]))
+homedir = environ['HOME']
+desktopdir=homedir + '/Desktop/'
+
 #~ SAVRW_DISPLAY_WARNS = warn
-logging.basicConfig(filename='error.log',filemode='w', level=logging.INFO)
+logging.basicConfig(filename=desktopdir +'error.log',filemode='w', level=logging.INFO)
 logger = logging.getLogger('sqlalchemy.engine')
 #~ logger.setLevel(logging.WARN)
 
-scriptdir = path.dirname(path.realpath(sys.argv[0]))
-
 Config = ConfigParser.ConfigParser()
 Config.read(scriptdir + '/config.ini')
-xlwriter = pd.ExcelWriter('output/LookupFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
+xlwriter = pd.ExcelWriter(scriptdir + '/output/LookupFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
 
 sqlsettings = dict(Config.items('sqlalchemy'))
 
@@ -50,7 +52,7 @@ def first_substring(strings, substring):
 	"""From Stack Overflow http://stackoverflow.com/a/2171094 """
 	return next((i for i, string in enumerate(strings) if substring in string),-1)
 
-log_level = 'ERROR'
+log_level = 'WARN'
 health_table = pd.DataFrame()
 health_vars = []
 
@@ -412,7 +414,8 @@ def write_to_db(table,filename):
 			print "%s was not saved to db: see error.log for details" % filename
 		except exc.IntegrityError, e:
 			logger.error("Integrity Error: %s: %s " % (filename, str(e)[0:200]))
-			logger.warn("...attempting workaround; will try line by line")
+			print "%s failed ...attempting workaround; will try line by line" % filename
+			print "This is likely to be slow."
 			num_rows = len(table)
 			bar=progressbar.ProgressBar()
 			#Iterate one row at a time

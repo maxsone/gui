@@ -1,4 +1,5 @@
-#!/home/guest-user/.virtualenvs/dev/bin/python -d
+#!/home/guest-user/.virtualenvs/dev/bin/python
+
 from sqlalchemy import engine_from_config, exc, MetaData
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session, aliased
@@ -10,12 +11,16 @@ import ConfigParser
 from Tkinter import *
 import tkMessageBox
 from tkFileDialog import asksaveasfilename
-from os import geteuid, path
+from os import environ, path
 import pdb 
 import sys, glob, inspect
 import regex as re
 
 sys.defaultencoding = 'utf-8'
+
+scriptdir = path.dirname(path.realpath(sys.argv[0]))
+homedir = environ['HOME']
+desktopdir=homedir + '/Desktop/'
 
 Config = ConfigParser.ConfigParser()
 Config.read(scriptdir + '/config.ini')
@@ -31,7 +36,7 @@ except ImportError:
 # useful debug stuff
 
 debug = Config.get('config','debug')
-scriptdir = path.dirname(path.realpath(sys.argv[0]))
+
 def line_no():
 	"""Returns the current line number in our program."""
 	return inspect.currentframe().f_back.f_lineno
@@ -45,9 +50,9 @@ if debug:
 
 
 if debug :
-	logging.basicConfig(filename='debug.log',filemode='w', level=logging.DEBUG)
+	logging.basicConfig(filename=desktopdir +'db-debug.log',filemode='w', level=logging.DEBUG)
 else :
-	logging.basicConfig(filename='gui-error.log',filemode='w', level=logging.ERROR)
+	logging.basicConfig(filename=desktopdir + 'db-error.log',filemode='w', level=logging.ERROR)
 
 pdb.set_trace()
 
@@ -166,11 +171,11 @@ class Application(Frame):
 
 		# inside the 'members' frame (inside the 'constraints' frame)
 		self.members = Frame(self.constraints,borderwidth=1)
-		self.constrainmembers = IntVar()
+		self.constrainmembers = IntVar() #constrain by characteristics of members?
 		self.constrainmembersButton = Checkbutton(self.members,variable=self.constrainmembers,command=self.MEMBERBASE_selectors,text="Constrain selection by MEMBERBASE characteristics")
 		self.constrainmembersButton.grid(column=0,sticky=W)
 		self.members.grid(column=0,sticky=W)
-		self.m_selectors = []
+		self.m_selectors = [] #which member char., which value?
 		self.selectors_count = 0
 		
 		
@@ -292,9 +297,10 @@ class Application(Frame):
 		
 	def file_save_as(self):
 		if debug == True:
-			f = '/home/elizabeth/development/output/out.xlsx'
+			f = '/home/mcmadmin/development/output/out.xlsx'
 			return f
-		f = asksaveasfilename(defaultextension='.xlsx')
+		
+		f = asksaveasfilename(defaultextension='.xlsx',initialdir=desktopdir)
 		if not f: # askdirectory return `None` if dialog closed with "cancel".
 			tkMessageBox.showinfo("Error","Must select a directory") 
 			pass
@@ -429,7 +435,8 @@ def qpreset():
 			tablekey = re.sub(ur"\p{P}+", "", tablename)
 			matches = [dbtablename for dbtablename in tabledict.keys() if tablekey in dbtablename]
 			if len(matches) > 1:
-				pdb.set_trace()
+				# if multiple matches, try for the one with the highest V value
+				tablekey = sorted(matches)[len(matches)-1]				
 			elif len(matches) < 1 :
 				continue
 			else :
