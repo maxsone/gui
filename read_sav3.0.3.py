@@ -1,4 +1,4 @@
-#!/home/guest-user/.virtualenvs/dev/bin/python -d
+#!/home/guest-user/.virtualenvs/dev/bin/python
 
 import pdb
 import getopt
@@ -11,7 +11,7 @@ from sqlalchemy.dialects.mysql import TINYTEXT, ENUM
 import ConfigParser
 import logging
 import re, glob, sys, inspect
-from os import path
+from os import path, environ
 import pandas as pd
 from csv import reader as csvreader 
 import warnings
@@ -25,14 +25,21 @@ scriptdir = path.dirname(path.realpath(sys.argv[0]))
 homedir = environ['HOME']
 desktopdir=homedir + '/Desktop/'
 
-#~ SAVRW_DISPLAY_WARNS = warn
-logging.basicConfig(filename=desktopdir +'error.log',filemode='w', level=logging.INFO)
-logger = logging.getLogger('sqlalchemy.engine')
-#~ logger.setLevel(logging.WARN)
-
 Config = ConfigParser.ConfigParser()
 Config.read(scriptdir + '/config.ini')
-xlwriter = pd.ExcelWriter(scriptdir + '/output/LookupFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
+
+log_level = 'WARN'
+
+if Config.get('settings','debug') :
+	log_level = 'INFO'
+
+logging.basicConfig(filename=desktopdir +'load-error.log',filemode='w')
+
+logger = logging.getLogger('sqlalchemy.engine')
+logger.setLevel(log_level)
+
+#used to record CODE1s we couldn't convert to CODE2s in anonymization
+xlwriter = pd.ExcelWriter(desktopdir + 'Code1LookupFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
 
 sqlsettings = dict(Config.items('sqlalchemy'))
 
@@ -52,7 +59,7 @@ def first_substring(strings, substring):
 	"""From Stack Overflow http://stackoverflow.com/a/2171094 """
 	return next((i for i, string in enumerate(strings) if substring in string),-1)
 
-log_level = 'WARN'
+
 health_table = pd.DataFrame()
 health_vars = []
 
@@ -62,12 +69,15 @@ def main(argv):
 	global log_level
 	global filepath	
 	global health_table
-	filepath = '/media/data/'
+	filepath = Config.get('filepaths','data')
 	filename = []
-	global health_var_file
+	log_level = 'ERROR'
+	global health_var_file = filepath + config.get('filepaths','health')
 	global health_vars
 	usemessage = path.basename(__file__) + " [--filename <file_path>] --secure <health_var_file> [--help] [--loglevel <loglevel>]"
 
+	pdb.set_trace()
+	
 	try : 
 		opts, args = getopt.getopt(argv,'hl:f:s:',["help", "debug","filename=" ,'secure=', 'loglevel='])
 	except getopt.GetoptError :
@@ -76,18 +86,23 @@ def main(argv):
 	for opt, arg in opts :
 		if opt in ('-h','--help') :
 			print usemessage
-			#~ return true
 		if opt in ('--filename') :
 			filename = arg
 		if opt in ('--secure','-s'):
 			health_var_file = arg
 		if opt in ('--loglevel','-l') :
 			log_level = arg
+		else :
+			if Config.get('settings','debug'):
+				log_level = 'INFO'
+			elif Config.get('settings','loglevel'):
+				log_level =  Config.get('settings','loglevel')
+				
 	
 	try :
 		health_var_file
 	except :
-		health_var_file = glob.glob(filepath + '/health*.csv')
+		health_var_file = glob.glob(filepath + 'Health*.csv')
 		try : 
 			health_var_file = health_var_file[0]
 		except :
@@ -129,7 +144,7 @@ def main(argv):
 				try :
 					tablename = write_to_db(table,filename)
 				except exc.OperationalError, e:
-					pdb.set_trace()
+
 					print "%s failed.  Trying %s with backup parser\n" % (filename, filename)
 					table = readbadfile(filename)
 					if table is not None :
@@ -138,10 +153,7 @@ def main(argv):
 						raise
 			if tablename :
 				built_tables.append(tablename)
-	#~ pdb.set_trace()
-	#~ if built_tables :
-		#~ for table in built_tables :
-			#~ table_structure(table)
+
 	
 	if health_table.any().any() :
 		try : 
@@ -155,8 +167,8 @@ def main(argv):
 def health_vals() :
 	health_var_names = []
 	if health_var_file :
-		health_vars = glob.glob(filepath + health_var_file) 
-		with open(health_vars[0]) as csvfile:
+
+		with open(health_var_file) as csvfile:
 			for row in csvreader(csvfile) :
 				health_var_names = health_var_names + row
 	health_var_names = [var.upper().strip() for var in health_var_names]
@@ -172,15 +184,13 @@ def anonymize(table,tablename) :
 		# ID.name which could not be matched to CODE1 in memberbase
 		failed = table[~table['ID.name'].isin(joined_table['ID.name'])]['ID.name'].to_frame()
 		## to_frame because this is just a series, which doesn't have a to_excel method
-		#~ pdb.set_trace()
+
 		failed.to_excel(xlwriter,sheet_name=tablename,columns=['ID.name'])
 	except:
-		pdb.set_trace()
+
 		logger.error("ur anonymizing code is borked somewhere man")
 		return False
 
-	#~ print "CODE2 lookup succeeded for %s records" % len(joined_table.index)
-	#~ print "CODE2 lookup failed for %s records" % len(failed.index)
 	return joined_table,failed	
 
 
@@ -256,6 +266,7 @@ def build_table(filename,table):
 		if tablename == 'memberbase' :
 			### Birthyear is being dropped because SysMis is badly encoded and causes choking
 			table.drop('BIRTHYEAR',inplace = True, axis=1 )
+			### FIXME?
 			### CODE1 being stripped to facilitate matching w/out whitespace
 			table['CODE1'] = table['CODE1'].map(str.strip)
 	if 'Code2' in table:
@@ -367,8 +378,8 @@ def readut8file(filename):
 			logger.error("line %s: %s %s" % (line_no(), filename, str(e)) )
 			return
 		except e:
-			 pdb.set_trace()
-			 return
+			logger.error("line %s: %s %s" % (line_no(), filename, str(e)) )
+			return
 	return table
 	
 def write_to_db(table,filename):
@@ -389,7 +400,7 @@ def write_to_db(table,filename):
 			except exc.OperationalError, e:
 				print str(e)
 			except exc.IntegrityError, e:
-				pdb.set_trace()
+				print str(e)
 			try: 
 				metatable.create()
 			except exc.OperationalError, e:
@@ -414,7 +425,7 @@ def write_to_db(table,filename):
 			print "%s was not saved to db: see error.log for details" % filename
 		except exc.IntegrityError, e:
 			logger.error("Integrity Error: %s: %s " % (filename, str(e)[0:200]))
-			print "%s failed ...attempting workaround; will try line by line" % filename
+			print "%s failed\n ...attempting workaround; will try line by line." % filename
 			print "This is likely to be slow."
 			num_rows = len(table)
 			bar=progressbar.ProgressBar()

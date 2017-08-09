@@ -35,7 +35,7 @@ except ImportError:
 ####
 # useful debug stuff
 
-debug = Config.get('config','debug')
+debug = Config.get('settings','debug')
 
 def line_no():
 	"""Returns the current line number in our program."""
@@ -54,7 +54,7 @@ if debug :
 else :
 	logging.basicConfig(filename=desktopdir + 'db-error.log',filemode='w', level=logging.ERROR)
 
-pdb.set_trace()
+#~ pdb.set_trace()
 
 sqlsettings = dict(Config.items('sqlalchemy'))
 
@@ -289,7 +289,7 @@ class Application(Frame):
 			tkMessageBox.showinfo("Alert","It is very rarely desired to have merged datasets containg all data ('FULL OUTER JOIN').  If you are certain this is what you want, please contact the database adminstrator.") 
 		
 	def selected_options(self):
-		pdb.set_trace()
+		#~ pdb.set_trace()
 		#~ self.SELECT.grid_forget()
 		#~ self.optiontext.grid_forget()
 		#~ self.EXPORT.grid(column=0)
@@ -366,9 +366,6 @@ def export(f):
 	else :
 		if len(selected_tables) > 0 :
 			pass
-		else :
-			pdb.set_trace()
-			#~ App.select_list()
 
 
 		if not Joint: 
@@ -394,7 +391,7 @@ def export(f):
 					try :
 						records = session.query(table).filter(table.CODE2.in_(filtered_members))
 					except Exception as err:
-						pdb.set_trace()
+						#~ pdb.set_trace()
 						logging.error('%s: %s' % (line_no(), err.message))
 					#~ records = session.query(table.__table__.alias()).join(filtered_members)
 				else :
@@ -477,7 +474,8 @@ def qfilter():
 	try :
 		query = query.filter_by(**filter_dict)
 	except:
-		pdb.set_trace()
+		logger.warn("%s error" % line_no())
+		#~ pdb.set_trace()
 		# for like, >,< use  getattr(MEMBERBASE,key)
 	return query
 			
