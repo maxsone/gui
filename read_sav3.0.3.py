@@ -72,11 +72,10 @@ def main(argv):
 	filepath = Config.get('filepaths','data')
 	filename = []
 	log_level = 'ERROR'
-	global health_var_file = filepath + config.get('filepaths','health')
+	global health_var_file
+	health_var_file = Config.get('filepaths','health')
 	global health_vars
 	usemessage = path.basename(__file__) + " [--filename <file_path>] --secure <health_var_file> [--help] [--loglevel <loglevel>]"
-
-	pdb.set_trace()
 	
 	try : 
 		opts, args = getopt.getopt(argv,'hl:f:s:',["help", "debug","filename=" ,'secure=', 'loglevel='])
@@ -86,6 +85,7 @@ def main(argv):
 	for opt, arg in opts :
 		if opt in ('-h','--help') :
 			print usemessage
+			sys.exit(2)
 		if opt in ('--filename') :
 			filename = arg
 		if opt in ('--secure','-s'):
@@ -114,6 +114,7 @@ def main(argv):
 	files = []
 	if filename :
 		files.append(filename)
+		files.append(glob.glob(filepath + '[mM]emberbase*.sav')[0])
 	else :
 		files = glob.glob(filepath + '/*.sav')
 
@@ -144,8 +145,8 @@ def main(argv):
 				try :
 					tablename = write_to_db(table,filename)
 				except exc.OperationalError, e:
-
-					print "%s failed.  Trying %s with backup parser\n" % (filename, filename)
+					# todo: does this ever get used?
+					print "\t%s failed.  Trying %s with backup parser\n" % (filename, filename)
 					table = readbadfile(filename)
 					if table is not None :
 						tablename = write_to_db(table,filename)
@@ -175,24 +176,32 @@ def health_vals() :
 	return health_var_names	
 
 def anonymize(table,tablename) :
+	preserve_dtypes = {}
 	memberbase = pd.read_sql_table('memberbase',engine,columns=['CODE1','CODE2']) 
 	if memberbase.any().any() :
 		print "trying to anonymize %s" % tablename
 		panel = memberbase[['CODE1','CODE2']]
-		joined_table = table.merge(panel,how='inner',right_on='CODE1',left_on="ID.name")
+		preserve_dtypes = table.dtypes.to_dict()
 	try: 
+		joined_table = table.merge(panel,how='inner',right_on='CODE1',left_on="ID.name")
+		#~ for column in 
+		## dtypes are set to OBJ after merge because no idea, so they have to be restored
+		for column in joined_table.columns: 
+			try:
+				joined_table[column] = joined_table[column].astype(preserve_dtypes[column])
+			except KeyError, e:
+				#~ print "keytype could not be cast %s" % e
+				pass
+		#~ pdb.set_trace()
+		
 		# ID.name which could not be matched to CODE1 in memberbase
 		failed = table[~table['ID.name'].isin(joined_table['ID.name'])]['ID.name'].to_frame()
 		## to_frame because this is just a series, which doesn't have a to_excel method
-
 		failed.to_excel(xlwriter,sheet_name=tablename,columns=['ID.name'])
 	except:
-
 		logger.error("ur anonymizing code is borked somewhere man")
 		return False
-
 	return joined_table,failed	
-
 
 survey_code_reg = re.compile('([0-9]{2})_?([0-9]{2})')
 
@@ -201,12 +210,13 @@ def relevant_health(health_vars,tablename) :
 	survey_name = survey_code_reg.search(tablename)
 	survey_name = survey_name.group()
 	relevant = [var for var in health_vars if var.startswith('Q' + survey_name) ] 
-	
 	return relevant
 		
 	
 def extract_health(health_vars,table) :
 	'''subtract health data from table, add to "health_table"'''
+	if len(health_vars) < 1 :
+		return table
 	global health_table
 	temp_health_table = pd.DataFrame()
 	combined = r"(\b" + r"\b)|(\b".join(health_vars) + r"\b)"
@@ -226,6 +236,8 @@ engine = SQL_connect()
 
 def build_schema(table):
 	schema = {}
+	
+	#~ pdb.set_trace()
 	for column in table.select_dtypes(include=[numpy.number]) :
 		if column == 'CODE2' :
 			schema[column] = types.String(10)
@@ -248,6 +260,7 @@ def build_schema(table):
 				logger.info("%s has objecttype that can't be made enum: %s" % (column, str(e)))
 				schema[column] = types.SmallInteger
 		else :
+			#~ pdb.set_trace()
 			schema[column] = types.Text
 	schema[u'CODE2'] = types.String(10)
 	#~ pdb.set_trace()
@@ -264,14 +277,11 @@ def build_table(filename,table):
 
 	if not questions :
 		if tablename == 'memberbase' :
-			### Birthyear is being dropped because SysMis is badly encoded and causes choking
-			table.drop('BIRTHYEAR',inplace = True, axis=1 )
-			### FIXME?
-			### CODE1 being stripped to facilitate matching w/out whitespace
+			### Birthyear works for rawmode = False, not for rawmode = True
 			table['CODE1'] = table['CODE1'].map(str.strip)
 	if 'Code2' in table:
 		table['CODE2'] = table.pop('Code2')
-		table['CODE2'] = table['CODE2'].astype('int').astype('str')
+		table['CODE2'] = table['CODE2'].astype('int').astype('U10')
 		indexloc = table['CODE2'][table['CODE2'].duplicated()]
 		if len(indexloc) > 0:
 			logger.warn('dropping non-unique rows with CODE2 = %s from %s' % (indexloc.values,tablename))
@@ -293,25 +303,29 @@ def build_table(filename,table):
 			except :
 				logger.warn("%s in %s could not be set as pandas dtype 'short'" % (column, filename) )
 	#~ table.convert_objects()
+	#~ if tablename != 'memberbase' :
+			#~ pdb.set_trace()
 	
 	for column in table.select_dtypes(include=['object','O'],exclude=['int64','category']) :
 		## strip strings of millions of spaces
+		
 		table[column] = table[column].map(str.strip)
 		try :
 			table[column] = table[column].astype('int')
-		except :
+			if len(table[column].unique()) < 50 :
+				try : 
+					table[column] = table[column].astype('category')
+				except :
+					logger.info('could not cast %s as category data' % column)
+		except ValueError:
 			logger.info("%s cannot be set as int" % column)
-		if len(table[column].unique()) < 50 :
-			try : 
-				table[column] = table[column].astype('category')
-			except :
-				logger.info('could not cast %s as category data' % column)
 				
 	if tablename != 'memberbase': 
 
 		if 'ID.format' in table :
 			## merge after stripping spaces for easier matching
 			table,failed = anonymize(table,tablename)
+			
 		## now remove nono-conforming column names, such as 'ID.format'
 		cols = [col for col in table.columns if ( col.endswith('SUM') or ( not col.startswith('Q') and col.upper() != 'CODE2') )]
 		table.drop(cols,inplace = True, axis=1 )
@@ -367,8 +381,9 @@ def makemetadata(schema,tablename):
 		return None
 
 def readut8file(filename):
-	with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99,rawMode=True,ioUtf8=True) as sNp :
-
+	#~ pdb.set_trace()
+	#~ with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99,rawMode=True,ioUtf8=True) as sNp :
+	with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99,ioUtf8=True) as sNp :
 		try :
 			table = pd.DataFrame(sNp.to_structured_array())
 		except ValueError, e :
@@ -416,7 +431,7 @@ def write_to_db(table,filename):
 			#~ pdb.set_trace()
 			table.to_sql(tablename,engine,schema=metadata,if_exists='append',index=True)
 			success = True
-			print "file %s saved to database\n" % filename
+			print "\nfile %s saved to database\n" % tablename
 		except ValueError, e:
 			logger.error("ValueError: Line %s: %s for %s" % (line_no(), filename, str(e)) )
 			print "%s was not saved to db: see error.log for details" % filename
@@ -425,31 +440,46 @@ def write_to_db(table,filename):
 			print "%s was not saved to db: see error.log for details" % filename
 		except exc.IntegrityError, e:
 			logger.error("Integrity Error: %s: %s " % (filename, str(e)[0:200]))
-			print "%s failed\n ...attempting workaround; will try line by line." % filename
-			print "This is likely to be slow."
+			print "%s failed\n\t ...attempting workaround; " % tablename
+			print "\tlooking for bad blocks"
 			num_rows = len(table)
-			bar=progressbar.ProgressBar()
+			bar=progressbar.ProgressBar(redirect_stdout=True)
+			#~ bar=progressbar.ProgressBar()
 			#Iterate one row at a time
 			rowssuccess = 0
-			for i in bar(range(num_rows)):
+			rowfailed = 0
+			step = 50
+			for i in bar(xrange(0,num_rows,step)):
+				##TODO: this could probably be abstracted into a recursive function w/ step values as arg?
 				try:
-					#Try inserting the row
-					table.iloc[i:i+1].to_sql(tablename,engine,schema=metadata,if_exists='append',index=True)
-					rowssuccess += 1
-				except exc.IntegrityError:
-					
-					logger.error("CODE2 = %s failed in %s.  Look for problem in memberbase" % (table.iloc[i:i+1].index.values,tablename))
-					#Ignore duplicates
-					pass
+					# Try inserting blocks of rows
+					table.iloc[i:i+step].to_sql(tablename,engine,schema=metadata,if_exists='append',index=True)
+					rowssuccess += step
+				except exc.IntegrityError, f:
+					# look for bad row in failed block
+					print "\t\tbad block found; locating bad line(s) %s - %s" % (i,i+step)
+					bar.update(int(round(i/step)))
+					for n in range(0,step) :
+						try :
+							table.iloc[i+n:i+n+1].to_sql(tablename,engine,schema=metadata,if_exists='append',index=True)
+							rowssuccess += 1
+						except exc.IntegrityError, e:
+1							rowfailed +=1
+							logger.error("CODE2 = %s failed in %s.  Occured > 1 in survey, or not in memberbase" % (int(e.params[0]),tablename))
+							bar.update(int(round(i/step)))
+							#Ignore duplicates
+							pass
 			if rowssuccess > 0 :
-				print "%s partially saved to database" % tablename
-				print "see errors.log for details of failed entries."
+				print "%s: %s rows from %s saved to database" % (tablename, rowssuccess,tablename)
+			if rowfailed > 0:
+				print "\t%s row(s) failed" % rowfailed
+				print "\tsee load-error.log for details of failed entries."
 		except exc.SQLAlchemyError, e:
 			logger.error("SQLAlchemy Error: %s: %s" % (filename, str(e)))
-			print "%s was not saved to db: see error.log for details" % filename
+			print "%s was not saved to db: see load-error.log for details" % filename
 		except exc.OperationalError, e:
 			logger.error("Operational Error: Line %s: %s " % (line_no(), str(e)))
-			print "%s was not saved to db: see error.log for details" % filename
+			print "%s was not saved to db: see load-error.log for details" % filename
 		except AttributeError, e :
 			logger.error("Attribute Error: Line %s: %s for %s" % (line_no(), filename, str(e)) )
 			print "%s was not saved to db: see error.log for details" % filename
