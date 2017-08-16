@@ -126,6 +126,8 @@ def main(argv):
 		memberbase_filename = files.pop(memberbase_idx)
 		files.insert(0,memberbase_filename)
 		for filename in files :
+			if '1301' in filename :
+				pdb.set_trace()
 			try :
 				table = readut8file(filename)
 			except ValueError, e:
@@ -445,7 +447,6 @@ def write_to_db(table,filename):
 			num_rows = len(table)
 			bar=progressbar.ProgressBar(redirect_stdout=True)
 			#~ bar=progressbar.ProgressBar()
-			#Iterate one row at a time
 			rowssuccess = 0
 			rowfailed = 0
 			step = 50
@@ -457,14 +458,14 @@ def write_to_db(table,filename):
 					rowssuccess += step
 				except exc.IntegrityError, f:
 					# look for bad row in failed block
-					print "\t\tbad block found; locating bad line(s) %s - %s" % (i,i+step)
+					print "\t\tbad block found: locating bad row(s) %s - %s" % (i,i+step)
 					bar.update(int(round(i/step)))
 					for n in range(0,step) :
 						try :
 							table.iloc[i+n:i+n+1].to_sql(tablename,engine,schema=metadata,if_exists='append',index=True)
 							rowssuccess += 1
 						except exc.IntegrityError, e:
-1							rowfailed +=1
+							rowfailed +=1
 							logger.error("CODE2 = %s failed in %s.  Occured > 1 in survey, or not in memberbase" % (int(e.params[0]),tablename))
 							bar.update(int(round(i/step)))
 							#Ignore duplicates
