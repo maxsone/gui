@@ -8,6 +8,7 @@ from sqlalchemy import engine_from_config, exc, types
 from sqlalchemy.sql import text
 from sqlalchemy import MetaData, Table,Column,ForeignKey
 from sqlalchemy.dialects.mysql import TINYTEXT, ENUM
+from parse import *
 import ConfigParser
 import logging
 import re, glob, sys, inspect
@@ -39,7 +40,8 @@ logger = logging.getLogger('sqlalchemy.engine')
 logger.setLevel(log_level)
 
 #used to record CODE1s we couldn't convert to CODE2s in anonymization
-xlwriter = pd.ExcelWriter(desktopdir + 'Code1LookupFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
+xlwriter1 = pd.ExcelWriter(desktopdir + 'Code1LookupFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
+xlwriter2 = pd.ExcelWriter(desktopdir + 'Code2saveFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
 
 sqlsettings = dict(Config.items('sqlalchemy'))
 
@@ -126,9 +128,8 @@ def main(argv):
 		memberbase_filename = files.pop(memberbase_idx)
 		files.insert(0,memberbase_filename)
 		for filename in files :
-			if '1301' in filename :
-				pdb.set_trace()
 			try :
+				print "Processing %s:" % filename
 				table = readut8file(filename)
 			except ValueError, e:
 				logger.error("Line %s : some kind of error in %s : %s" % (line_no(), filename, str(e)))
@@ -140,6 +141,7 @@ def main(argv):
 			except exc.IntegrityError, e:
 				logger.error("Line %s : some kind of error in %s : %s" % (line_no(), filename, str(e)))
 				continue
+				
 
 			if table is None:
 				pass
@@ -163,8 +165,8 @@ def main(argv):
 			health_table.to_sql('health',engine,if_exists='replace',index=True,dtype={'CODE2':types.String(10)})
 		except exc.SQLAlchemyError, e:
 			logger.error(str(e))
-	xlwriter.save()
-	xlwriter.close()
+	xlwriter1.save()
+	xlwriter1.close()
 	return True
 	
 def health_vals() :
@@ -181,25 +183,22 @@ def anonymize(table,tablename) :
 	preserve_dtypes = {}
 	memberbase = pd.read_sql_table('memberbase',engine,columns=['CODE1','CODE2']) 
 	if memberbase.any().any() :
-		print "trying to anonymize %s" % tablename
+		#~ print "\ttrying to anonymize %s" % tablename
 		panel = memberbase[['CODE1','CODE2']]
 		preserve_dtypes = table.dtypes.to_dict()
 	try: 
 		joined_table = table.merge(panel,how='inner',right_on='CODE1',left_on="ID.name")
-		#~ for column in 
 		## dtypes are set to OBJ after merge because no idea, so they have to be restored
 		for column in joined_table.columns: 
 			try:
 				joined_table[column] = joined_table[column].astype(preserve_dtypes[column])
 			except KeyError, e:
-				#~ print "keytype could not be cast %s" % e
+				logger.warn("keytype could not be cast %s while anonymizing" % e )
 				pass
-		#~ pdb.set_trace()
-		
 		# ID.name which could not be matched to CODE1 in memberbase
 		failed = table[~table['ID.name'].isin(joined_table['ID.name'])]['ID.name'].to_frame()
 		## to_frame because this is just a series, which doesn't have a to_excel method
-		failed.to_excel(xlwriter,sheet_name=tablename,columns=['ID.name'])
+		failed.to_excel(xlwriter1,sheet_name=tablename,columns=['ID.name'])
 	except:
 		logger.error("ur anonymizing code is borked somewhere man")
 		return False
@@ -221,12 +220,27 @@ def extract_health(health_vars,table) :
 		return table
 	global health_table
 	temp_health_table = pd.DataFrame()
-	combined = r"(\b" + r"\b)|(\b".join(health_vars) + r"\b)"
-	for column in table.columns :
-		if re.match(combined,column) :
-			health_var = table[column]
-			temp_health_table[column] = health_var
-			table.drop(column,inplace = True, axis=1 )
+	removed_health = 0
+	#~ pdb.set_trace()
+	for health_pattern in health_vars :
+		health_pattern = re.sub(r'_0','_0?', health_pattern)
+		r = re.compile(health_pattern)		
+		newlist = filter(r.match,table.columns.tolist()) 
+		if len(newlist) > 0:
+			for column in newlist :
+				health_var = table[column]
+				temp_health_table[column] = health_var
+				table.drop(column,inplace = True, axis=1 )
+				removed_health += 1
+		else :
+			pdb.set_trace()
+			logger.error("Pattern %s was given as a sensitive health question, but no matching question was found" % health_pattern)
+			print "Health Question not found!  File will fail, rather than store potentially sensitive health data"
+			return
+	print "\t%s health vars searched for, %s health vars found and removed for safe storage" % (len(health_vars),removed_health)
+	if len(health_vars) > removed_health :
+		logger.warn("the function was given the the following %s health vars to search for: %s" % (len(health_vars), str(health_vars)) )
+		logger.warn("the following %s items health info was found: %s" % ( removed_health, str(temp_health_table.columns.tolist()) ) )
 	if health_table.empty :
 		health_table = temp_health_table
 	else :
@@ -325,10 +339,9 @@ def build_table(filename,table):
 	if tablename != 'memberbase': 
 
 		if 'ID.format' in table :
-			## merge after stripping spaces for easier matching
+			print "\tattempting to anonymize %s" % tablename
 			table,failed = anonymize(table,tablename)
-			
-		## now remove nono-conforming column names, such as 'ID.format'
+		## now remove non-conforming column names, such as 'ID.format'
 		cols = [col for col in table.columns if ( col.endswith('SUM') or ( not col.startswith('Q') and col.upper() != 'CODE2') )]
 		table.drop(cols,inplace = True, axis=1 )
 		if len(cols) > 0:
@@ -383,19 +396,24 @@ def makemetadata(schema,tablename):
 		return None
 
 def readut8file(filename):
-	#~ pdb.set_trace()
-	#~ with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99,rawMode=True,ioUtf8=True) as sNp :
 	with savReaderWriter.SavReaderNp(filename,recodeSysmisTo=99,ioUtf8=True) as sNp :
 		try :
 			table = pd.DataFrame(sNp.to_structured_array())
+			##todo: you can use varnames to generate nicer names for questions
+			varnames = sNp.varLabels
 		except ValueError, e :
+			print "%s failed.  No workaround possible, see load-errors.log" % filename
 			logger.error("line %s: %s %s" % (line_no(), filename, str(e)) )
+			logger.error("%s was not saved to database.  This may be because there are duplicate question names or labels in spss.  Names and labels cannot be the same." % filename)
+			#~ pdb.set_trace()
 			return
 		except TypeError, e :
 			logger.error("line %s: %s %s" % (line_no(), filename, str(e)) )
+			#~ pdb.set_trace()
 			return
 		except e:
 			logger.error("line %s: %s %s" % (line_no(), filename, str(e)) )
+			pdb.set_trace()
 			return
 	return table
 	
@@ -407,8 +425,13 @@ def write_to_db(table,filename):
 		if tablename != 'memberbase' :
 			if health_vars:
 				table_health = relevant_health(health_vars,tablename)
-				table = extract_health(table_health,table)
+				try : 
+					table = extract_health(table_health,table)
+				except:
+					return False
 		
+		if table is None :
+			return False
 		success = False
 		
 		if metatable != None :
@@ -449,6 +472,7 @@ def write_to_db(table,filename):
 			#~ bar=progressbar.ProgressBar()
 			rowssuccess = 0
 			rowfailed = 0
+			badC2 = []
 			step = 50
 			for i in bar(xrange(0,num_rows,step)):
 				##TODO: this could probably be abstracted into a recursive function w/ step values as arg?
@@ -466,7 +490,8 @@ def write_to_db(table,filename):
 							rowssuccess += 1
 						except exc.IntegrityError, e:
 							rowfailed +=1
-							logger.error("CODE2 = %s failed in %s.  Occured > 1 in survey, or not in memberbase" % (int(e.params[0]),tablename))
+							logger.warn("CODE2 = %s failed in %s.  Occured > 1 in survey, or not in memberbase" % (int(e.params[0]),tablename))
+							badC2.append(e.params[0])
 							bar.update(int(round(i/step)))
 							#Ignore duplicates
 							pass
@@ -475,6 +500,7 @@ def write_to_db(table,filename):
 			if rowfailed > 0:
 				print "\t%s row(s) failed" % rowfailed
 				print "\tsee load-error.log for details of failed entries."
+				#~ xslwriter2
 		except exc.SQLAlchemyError, e:
 			logger.error("SQLAlchemy Error: %s: %s" % (filename, str(e)))
 			print "%s was not saved to db: see load-error.log for details" % filename
