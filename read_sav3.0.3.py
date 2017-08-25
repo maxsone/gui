@@ -10,6 +10,7 @@ from sqlalchemy import MetaData, Table,Column,ForeignKey
 from sqlalchemy.dialects.mysql import TINYTEXT, ENUM
 from parse import *
 import ConfigParser
+import keyring
 import logging
 import re, glob, sys, inspect
 from os import path, environ
@@ -43,7 +44,19 @@ logger.setLevel(log_level)
 xlwriter1 = pd.ExcelWriter(desktopdir + 'Code1LookupFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
 xlwriter2 = pd.ExcelWriter(desktopdir + 'Code2saveFailed.xlsx',engine='xlsxwriter',options={'encoding':'unicode'})
 
+pdb.set_trace()
+
+try :
+	keyring.get_keyring()
+	SQLkey = keyring.get_password('MySQL','python')
+except RuntimeError:
+	SQLkey = raw_input("enter password: ")
+	
+
+Config.set('sqlalchemy','password',SQLkey)
+
 sqlsettings = dict(Config.items('sqlalchemy'))
+
 
 def SQL_connect() :
 	try:
@@ -233,7 +246,7 @@ def extract_health(health_vars,table) :
 				table.drop(column,inplace = True, axis=1 )
 				removed_health += 1
 		else :
-			pdb.set_trace()
+
 			logger.error("Pattern %s was given as a sensitive health question, but no matching question was found" % health_pattern)
 			print "Health Question not found!  File will fail, rather than store potentially sensitive health data"
 			return
