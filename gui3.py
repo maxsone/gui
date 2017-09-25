@@ -15,6 +15,7 @@ from os import environ, path
 import pdb 
 import sys, glob, inspect
 import regex as re
+import keyring
 
 sys.defaultencoding = 'utf-8'
 
@@ -55,6 +56,15 @@ else :
 	logging.basicConfig(filename=desktopdir + 'db-error.log',filemode='w', level=logging.ERROR)
 
 #~ pdb.set_trace()
+
+try :
+	keyring.get_keyring()
+	SQLkey = keyring.get_password('MySQL','python')
+except RuntimeError:
+	SQLkey = raw_input("enter MySQL password: ")
+	
+
+Config.set('sqlalchemy','password',SQLkey)
 
 sqlsettings = dict(Config.items('sqlalchemy'))
 
@@ -103,17 +113,11 @@ tables.set(' '.join(sorted(tablenames)))
 
 selected_tables = []
 
-def log():
-	raise NotImplementedError
-
 def current_user():
   if pwd:
     return pwd.getpwuid(geteuid()).pw_name
   else:
     return getpass.getuser()
-	
-def return_query():
-	raise NotImplementedError
 
 class Application(Frame):
 
@@ -132,11 +136,11 @@ class Application(Frame):
 		self.QUIT["text"] = "QUIT"
 		self.QUIT["fg"]   = "red"
 		self.QUIT["command"] =  self.quit
-		self.QUIT.grid(row=0,column=1)
 		self.EXPORT = Button(self.bottom) #button sends selection to Application.export_selection()
 		self.EXPORT["text"] = "export selection"
 		self.EXPORT["command"] = self.export_selection
-		self.EXPORT.grid(column=0,row=0)
+		self.EXPORT.grid(row=0,column=0,)
+		self.QUIT.grid(row=0,column=1)
 
 
 		# inside the 'tables' frame
@@ -259,13 +263,16 @@ class Application(Frame):
 		self.createWidgets()
 
 	def export_selection(self):
+		# TODO this should probably be refactored so that the file isn't selected until the query is succesful but UGH
 		try :
-			 export(self.outdir)
-			 select_list(self)
+			export(self.outdir)
+			select_list(self)
+			self.outdir = None
 		except :
 			try: 
 				self.outdir = self.file_save_as()
 				export(self.outdir)
+				self.outdir = None
 			except IOError as e: 
 				tkMessageBox.showinfo("Error","something went wrong somewhere: %s" % e) 
 
@@ -312,19 +319,13 @@ def tables_set(db_tables):
 
 	selected_tables = [base.classes[i] for i in db_tables]
 
-		
-#~ def find_joint_membership() :
-	#~ tablenames = [table.__table__.description for table in selected_tables]
-	#~ q = session.query()
-	#~ return joint_members
- 
 
 def to_dict_dropna(data):
 	return dict((k, v.dropna().tolist()) for k, v in compat.iteritems(data) if len(v.dropna().tolist()) > 0 )
 
 def matrix():
 
-	filepath = Config.get('config','data')
+	filepath = Config.get('filepaths','data')
 	try :
 		matrixfile =  glob.glob(filepath + 'matrix*.xlsx')[-1]
 	except :
@@ -347,6 +348,7 @@ def matrix():
 def export(f):
 	global selected_tables
 	presets = App.presets.winfo_ismapped()
+	pdb.set_trace()
 	member_filter = App.constrainmembers.get() 
 	Inner = App.inner.get()
 	Joint = App.joint.get()
@@ -358,11 +360,18 @@ def export(f):
 	if presets :
 		# probably we want individual sheets w/ records on them?
 		preset_columns = qpreset()
-		# table[0]._parententity.mapped_table.description
+		pdb.set_trace()
+		if preset_columns == "no matches" :
+			tkMessageBox.showinfo("Error","No tables/columns found matching this category") 
+			return 0
+		elif preset_columns == "no selection" :
+			return 0
+		success = 0
 		for table, columns in  preset_columns.iteritems():
 			tablequery = session.query().with_entities(*columns)
+			pdb.set_trace()
 			df = read_sql_query(tablequery.statement,engine,index_col="CODE2")
-			df.to_excel(writer,index='false',sheet_name=table)
+			df.sort_index(axis=1).to_excel(writer,index='false',sheet_name=table)
 	else :
 		if len(selected_tables) > 0 :
 			pass
@@ -380,14 +389,7 @@ def export(f):
 				sheetname = "%s" % table.__table__.description
 
 				if Inner or member_filter:
-					#~ if debug:
-						#~ try:
-							#~ pdb.set_trace()
-							#~ records = session.query(table).join(MEMBERBASE,MEMBERBASE.CODE2==table.CODE2).filter(MEMBERBASE.AGEGR == '6')
-						#~ except Exception as err:
-							#~ print traceback.format_exc()
-							#~ pdb.set_trace()
-							#~ print err.message
+
 					try :
 						records = session.query(table).filter(table.CODE2.in_(filtered_members))
 					except Exception as err:
@@ -399,7 +401,10 @@ def export(f):
 				#make this into a pandas dataframe, because of manageability of dfs, and pandas nice excel methods
 				try :
 					df = read_sql_query(records.statement,engine,index_col="CODE2")
-					df.to_excel(writer,index='false',sheet_name=sheetname)
+					if len(df) == 0 :
+						tkMessageBox("Warning","this query produced an empty result set")
+						return False
+					df.sort_index(axis=1).to_excel(writer,index='false',sheet_name=sheetname)
 					if debug:
 						#~ pdb.set_trace()
 						logging.debug('using query: %s' % records.statement.compile(engine,compile_kwargs={"literal_binds": True}))
@@ -407,10 +412,12 @@ def export(f):
 					logging.error('%s: %s' % (line_no(), err.message))
 				
 		else :
-			records = qjoin(selected_tables)
-
+			records = qjoin(selected_tables, Inner)
 			df = read_sql_query(records.statement,engine,index_col="CODE2")
-			df.to_excel(writer,index='false')
+			if len(df) == 0 :
+				tkMessageBox("Warning","this query produced an empty result set")
+				return False
+			df.sort_index(axis=1).to_excel(writer,index='false')
 
 	writer.save()
 	## todo: test for success
@@ -419,8 +426,11 @@ def export(f):
 	root.quit
 
 def qpreset():
-	subjects = App.matrix[App.subject.get()]
-
+	try :
+		subjects = App.matrix[App.subject.get()]
+	except KeyError, e:
+		tkMessageBox.showinfo("Warning:","No preset topic selected.  Please select topic, or use data from tables")
+		return "no selection"
 	#~ query = session.query()
 	select_columns = dict()
 	for tablename in subjects.keys():
@@ -447,7 +457,10 @@ def qpreset():
 			column_objs = [tableobj.CODE2] + column_objs
 			select_columns[tablekey]=column_objs
 		except KeyError, e:
-			logging.error("%s: %s" % (line_no(), str(e)))
+			## could go through these grepping for all possible variations but no
+			logging.error("%s: %s from subject matrix not found in %s "  % (line_no(), str(e), tablekey))
+	if select_columns == {} :
+		return "no matches"
 
 	return select_columns
 		#~ query = query.with_entities(*tablecolumns)
@@ -479,18 +492,25 @@ def qfilter():
 		# for like, >,< use  getattr(MEMBERBASE,key)
 	return query
 			
-def qjoin(db_tables):
+def qjoin(db_tables, inner):
 	tables = db_tables[:]
 	firsttable = tables.pop(0)
 	query = session.query(firsttable,*tables)
 
-	for i in tables :
-		try: 
-			query = query.join(i, i.CODE2==firsttable.CODE2)
-		except AttributeError, e:
-			print str(e)
-	
-	return query
+	if inner == 0:
+		for i in tables :
+			try: 
+				query = query.join(i, i.CODE2==firsttable.CODE2, isouter=True)
+			except AttributeError, e:
+				print str(e)
+		return query
+	else :
+		for i in tables :
+			try: 
+				query = query.join(i, i.CODE2==firsttable.CODE2)
+			except AttributeError, e:
+				print str(e)
+		return query
 
 session = Session(engine)
 
