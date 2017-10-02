@@ -42,12 +42,12 @@ def line_no():
 	"""Returns the current line number in our program."""
 	return inspect.currentframe().f_back.f_lineno
 
-if debug:
-	def excepthook(etype, value, traceback):
-		pdb.set_trace()
-	import traceback
-	import sys
-	sys.excepthook = excepthook
+#~ if debug:
+	#~ def excepthook(etype, value, traceback):
+		#~ pdb.set_trace()
+	#~ import traceback
+	#~ import sys
+	#~ sys.excepthook = excepthook
 
 
 if debug :
@@ -101,7 +101,7 @@ tablenames = base.classes.keys()
 tabledict = { x: base.classes[x] for x in tablenames }
 
 #tablenames is used to populate menu, shouldn't have direct access
-tablenames.remove('memberbase')
+tablenames= [x for x in tablenames if x not in ['memberbase','health','demographic']]
 
 #we're going to want to be able to reference this.
 MEMBERBASE = base.classes['memberbase'] 
@@ -223,9 +223,10 @@ class Application(Frame):
 	def MEMBERBASE_selectors(self) :
 		cur_row = self.selectors_count + 4
 		if self.constrainmembers.get() :
+			
 			varname = StringVar()
 			self.membercols = Frame(self.members,borderwidth=1)
-			self.m_s_var = OptionMenu(self.membercols,varname,*MEMBERBASE.__table__.columns.keys())
+			self.m_s_var = OptionMenu(self.membercols,varname,*joined_memberdata.selectable.c.keys())
 
 			#todo: assign *MEMBERBASE.__table__.columns.keys() to a var and remove one 
 			#every time it's used, since we can probably only assign var once
@@ -470,7 +471,8 @@ def qpreset():
 
 def qfilter():
 	filter_dict = {}
-	query = session.query(aliased(MEMBERBASE).CODE2)
+	pdb.set_trace()
+	query = session.query()
 	for i in App.m_selectors:
 		try : 
 			key = i[0].get()
@@ -486,8 +488,8 @@ def qfilter():
 		filter_dict[key] = value
 	try :
 		query = query.filter_by(**filter_dict)
-	except:
-		logger.warn("%s error" % line_no())
+	except Exception, e:
+		logging.warn("line %s: error %s" % (line_no(),e))
 		#~ pdb.set_trace()
 		# for like, >,< use  getattr(MEMBERBASE,key)
 	return query
@@ -517,6 +519,8 @@ session = Session(engine)
 ## session.query(MEMBERBASE).filter(MEMBERBASE.BIRTHYEAR >= 1980).one()
 
 q = session.query()
+pdb.set_trace()
+joined_memberdata = session.query(MEMBERBASE,base.classes['demographic']).join(base.classes['demographic'],base.classes['demographic'].CODE2==MEMBERBASE.CODE2)
 App = Application(master=root)
 App.mainloop()
 

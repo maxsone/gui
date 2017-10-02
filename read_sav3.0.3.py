@@ -19,7 +19,9 @@ from csv import reader as csvreader
 import warnings
 import savReaderWriter
 import sys, traceback
+import toml
 import progressbar
+from collections import defaultdict
 
 sys.defaultencoding='utf-8'
 
@@ -30,6 +32,8 @@ Config = ConfigParser.ConfigParser()
 Config.read(scriptdir + '/config.ini')
 
 log_level = 'WARN'
+
+#~ pdb.set_trace()
 
 if Config.getboolean('settings','debug') :
 	log_level = 'INFO'
@@ -77,6 +81,24 @@ def first_substring(strings, substring):
 
 health_table = pd.DataFrame()
 health_vars = []
+
+# find demographic data from surveys which ought to be in memberbase
+demographic_matrix = toml.load('demographic.toml')
+demographic_df = pd.DataFrame()
+
+def demographic_tables() :
+	table_qqs = {}
+
+	for topic in demographic_matrix.keys() :
+		for key, value in demographic_matrix[topic]['questions'].iteritems() : 
+			if table_qqs.has_key(key):
+				table_qqs[key].update({value:topic})
+			else :
+				table_qqs[key] = {value:topic}
+	return table_qqs
+
+d_survey_qqs=demographic_tables()
+
 
 def main(argv):
 	global log_level
@@ -136,7 +158,8 @@ def main(argv):
 		files.append(filename)
 	else :
 		files = glob.glob(filepath + '/*.sav')
-	#~ pdb.set_trace()
+	# globbed files should be listed in ascending order, which will be useful when overwriting early data w/ later
+	
 	built_tables = []
 	if health_var_file:
 		health_vars = health_vals()
@@ -190,15 +213,80 @@ def main(argv):
 	
 	if health_table.any().any() :
 		try : 
-			health_table.to_sql('health',engine,if_exists='replace',index=True,dtype={'CODE2':types.String(10)})
+			health_table.to_sql('health',engine,if_exists='replace',dtype={'CODE2':types.String(10)})
+			table_structure('health')
 		except exc.SQLAlchemyError, e:
 			logger.error(str(e))
+		except TypeError, e:
+			pdb.set_trace()
+	if demographic_df.any().any() :
+
+		try : 
+			demographic_df.to_sql('demographic',engine,if_exists='replace',dtype={'CODE2':types.String(10)})
+			table_structure('demographic')
+		except exc.SQLAlchemyError, e:
+			logger.error(str(e))
+		except TypeError, e:
+			pdb.set_trace()
 	xlwriter1.save()
 	xlwriter2.save()
 	xlwriter1.close()
 	xlwriter2.close()
 	return True
 	
+def demographic_lookup(table, survey_no) : 
+	# find columns relevant to this table
+	for column in d_survey_qqs[survey_no].keys() :
+		topic = d_survey_qqs[survey_no][column]
+		#~ pdb.set_trace()
+		try :
+			# see if the column needs to be transformed
+			series = table[column].map(demographic_matrix[topic]['transformations'][column])
+			print "\t\t\ttransforming demographic"
+		except :
+			try :
+				series = table[column]
+			except KeyError, e:
+				#~ logging.warn("Trying with alternate coding")
+				if column[0] == 'Q' :
+					column = column.replace('Q','D')
+				if column[0] == 'D' :
+					column = column.replace('D','Q')
+				try :
+					series = table[column]
+				except Exception, e:
+					logging.error("Searching for demographic data, '%s' but %s has no column %s" % (topic, survey_no, column))
+					continue
+		series.rename(topic,inplace=True)
+		if topic in demographic_df.keys() :
+			#~ pdb.set_trace()
+			noanswer = series[series.isin(['97','98','99'])]
+			answer = series[~series.isin(['97','98','99'])]
+			#update any newer positive answers
+			demographic_df.update(answer)
+			#update any newer negative answers if replacing negative answer
+			try :	
+				demographic_df.update(noanswer,filter_func=lambda x: x >= '97')
+			except TypeError:
+				try :
+					demographic_df.update(noanswer,filter_func=lambda x: x >= '98')
+				except TypeError:
+					try: 
+						demographic_df.update(noanswer,filter_func=lambda x: x >= '99')
+					except:
+						pdb.set_trace()
+			except ValueError, e:
+				pdb.set_trace()
+			#add any missing positive or negative answers
+			try :
+				demographic_df[topic] = demographic_df[topic].append(series[series.index.difference(demographic_df.index)],verify_integrity=True)
+			except ValueError, e:
+				pdb.set_trace()			
+		else :
+			demographic_df[topic] = series
+
+
+
 def health_vals() :
 	health_var_names = []
 	if health_var_file :
@@ -225,9 +313,9 @@ def anonymize(table,tablename) :
 				joined_table[column] = joined_table[column].astype(preserve_dtypes[column])
 			except KeyError, e:
 				try :
-					logger.warn("keytype %s could not be cast %s while anonymizing" % [preserve_dtypes[column], e] )
+					logger.warn("keytype %s could not be cast %s while anonymizing" % (preserve_dtypes[column], e) )
 				except KeyError, e:
-					logger.warn("key %s not found in joined table %s" % [column, tablename])
+					logger.warn("key %s not found in joined table %s" % (column, tablename))
 				pass
 			except Exception, e:
 				pdb.set_trace()
@@ -282,6 +370,7 @@ def extract_health(health_vars,table) :
 		for health_pattern in health_vars :
 			# alternately, look for health data indicated in an external file
 			health_pattern = re.sub(r'_0','_0?', health_pattern)
+			health_pattern = re.sub(r'$','$', health_pattern)
 			r = re.compile(health_pattern)		
 			newlist = filter(r.match,table_columns) 
 			if len(newlist) > 0:
@@ -323,7 +412,7 @@ def build_schema(table):
 		elif table[column].dtype.name == 'category' :
 			catlist = [str(x.upper()) if isinstance(x,basestring) else x for x in table[column].cat.categories.tolist()]
 			if '99' not in catlist :
-				catlist.append('99')
+				catlist.append('97','98','99')
 			
 			#remove duplicates
 			catlist = set(catlist)
@@ -373,7 +462,7 @@ def build_table(filename,table):
 	for column in table.select_dtypes(include=[numpy.number]) :
 		if table[column].max() <= 99 :
 			try : 
-				table[column] = table[column].astype('int').astype('str').astype('category')
+				table[column] = table[column].astype('int').astype('str').astype('category', ordered=True)
 				try :
 					table[column].cat.add_categories(['99'],inplace=True)
 				except :
@@ -399,7 +488,7 @@ def build_table(filename,table):
 			table[column] = table[column].astype('int')
 			if len(table[column].unique()) < 50 :
 				try : 
-					table[column] = table[column].astype('category')
+					table[column] = table[column].astype('category', ordered=True)
 					table[column] = table[column].cat.add_categories(['99'],inplace=True)
 					table[column].fillna('99',inplace=True)
 				except :
@@ -469,8 +558,9 @@ cleanmeta.drop_all()
 meta = MetaData(bind=engine)
 
 def makemetadata(schema,tablename):
+	
 	if schema :
-		if tablename != 'memberbase' :
+		if tablename.startswith('MCM') :
 			table = Table(tablename, meta, 
 				# these tables need CODE2 referencing memberbase.CODE2
 				*[Column(column, schema[column]) if column != 'CODE2' else Column(column, schema[column], ForeignKey('memberbase.CODE2'), primary_key = True) for column in schema.keys()]
@@ -478,8 +568,8 @@ def makemetadata(schema,tablename):
 		else :
 			table = Table(tablename, meta, 
 				*[Column(column, schema[column]) if column != 'CODE2' else Column(column, schema[column], primary_key = True) for column in schema.keys()]
-				
 				)
+
 		return table
 	else :
 		return None
@@ -511,6 +601,7 @@ def write_to_db(table,filename):
 		metatable = None
 		logger.info("Attempting to process file %s" % filename)
 		table,tablename,schema = build_table(filename,table)
+
 		metatable = makemetadata(schema,tablename)
 		if tablename != 'memberbase' :
 			if health_vars:
@@ -524,6 +615,15 @@ def write_to_db(table,filename):
 			return False
 		success = False
 		
+		try:
+			int(tablename[4:8])
+
+			if d_survey_qqs.has_key(tablename[4:8]) : 
+				# use has_key because default_dict will not return keyerror
+				demographic_lookup(table,tablename[4:8])
+		except ValueError, e:
+			logging.error("probably your filename could not be found usng the deomgraphric matrix")
+			# probably you have a badly formatted filename	
 		if metatable != None :
 			try: 
 				metatable.drop(checkfirst=True)
@@ -622,7 +722,7 @@ def table_structure(tablename):
 		connection.execute(query)
 	except exc.SQLAlchemyError, e:
 		logger.error( str(e))
-	if tablename != 'memberbase' :
+	if tablename.startswith('MCM') :
 		query = "ALTER TABLE %s ADD FOREIGN KEY (CODE2) REFERENCES memberbase(CODE2) ON DELETE CASCADE ON UPDATE CASCADE;" % tablename
 		try :
 			connection.execute(query)
