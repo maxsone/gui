@@ -6,7 +6,7 @@ import numpy
 from sqlalchemy import schema as alchemyschema
 from sqlalchemy import engine_from_config, exc, types
 from sqlalchemy.sql import text
-from sqlalchemy import MetaData, Table,Column,ForeignKey
+from sqlalchemy import MetaData, Table, Column, ForeignKey
 from sqlalchemy.dialects.mysql import TINYTEXT, ENUM
 from parse import *
 import ConfigParser
@@ -228,6 +228,7 @@ def main(argv):
 			logger.error(str(e))
 		except TypeError, e:
 			pdb.set_trace()
+	create_view()
 	xlwriter1.save()
 	xlwriter2.save()
 	xlwriter1.close()
@@ -729,7 +730,26 @@ def table_structure(tablename):
 			print "table %s succesfully connected" % tablename
 		except exc.SQLAlchemyError, e:
 			logger.error( str(e))
+	connection.close()
 			
+def create_view():
+	connection = engine.connect()
 
+	create_view_sql = """CREATE VIEW memberdata as SELECT `memberbase`.`FSA`, `memberbase`.`AGEGR`, `memberbase`.`LOCALE`, 
+	`memberbase`.`REG`, `memberbase`.`PR`, `memberbase`.`RPHON`, `memberbase`.`GENDR`, `memberbase`.`BIRTH YEAR`, `memberbase`.`PRECODE1`, 
+	`memberbase`.`PMEMBER`, `memberbase`.`EML_F`, `memberbase`.`CITY`, `memberbase`.`ETHN`, `memberbase`.`CODE2`, `memberbase`.`START`, 
+	`memberbase`.`PCODE`, `memberbase`.`CODE1`, `memberbase`.`RNAME`, `memberbase`.`ADDR`, `memberbase`.`INSPH`, `demographic`.`Marital`, 
+	`demographic`.`Kitchen`, `demographic`.`Gender` as D_GENDR, `demographic`.`Occupation`, `demographic`.`Food Spend`, `demographic`.`Shopping`, 
+	`demographic`.`Cooking`
+FROM `memberbase`
+LEFT OUTER JOIN `demographic` ON `demographic`.`CODE2` = `memberbase`.`CODE2`
+"""
+	try :
+		connection.execute(create_view_sql)
+	except Exception, e:
+		pdb.set_trace()
+		logger.error("Could not create view: %s" % e)
+	finally: 
+		connection.close()
 
 main(sys.argv[1:])

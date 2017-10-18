@@ -1,8 +1,8 @@
 #!/home/guest-user/.virtualenvs/dev/bin/python
 
-from sqlalchemy import engine_from_config, exc, MetaData
+from sqlalchemy import Table, Column, ForeignKey, engine_from_config, exc, MetaData
 from sqlalchemy.ext.automap import automap_base
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, relationship, configure_mappers
 from sqlalchemy.sql.expression import join as sqljoin 
 from pandas import DataFrame, read_sql_query, compat, ExcelWriter, read_excel
 from pandas import lib as pdlib 
@@ -36,7 +36,7 @@ except ImportError:
 ####
 # useful debug stuff
 
-debug = Config.get('settings','debug')
+debug = Config.getboolean('settings','debug')
 
 def line_no():
 	"""Returns the current line number in our program."""
@@ -55,7 +55,6 @@ if debug :
 else :
 	logging.basicConfig(filename=desktopdir + 'db-error.log',filemode='w', level=logging.ERROR)
 
-#~ pdb.set_trace()
 
 try :
 	keyring.get_keyring()
@@ -86,10 +85,25 @@ frame = Frame(root)
 
 # What tables (surveys) do we have in the db?
 metadata = MetaData()
-metadata.reflect(bind=engine)
+
 base = automap_base(metadata=metadata)
 
-base.prepare(engine,reflect=True)
+
+## because memberdata is a view and not a table, reflecting doesn't work well, have to tell sqlalchemy how to model it.
+
+#~ class Memberdata(base):
+	#~ __tablename__ = 'memberdata'
+	#~ CODE2 = Column('CODE2',ForeignKey('memberbase.CODE2'), primary_key = True )
+	#~ weird  = relationship("member_data",
+				#~ foreign_keys='memberbase.CODE2',
+				#~ primaryjoin='memberbase.CODE2 == memberdata.CODE2')
+				
+## we're using a view of the memberbase, rather than entire, for privacy
+
+memberdata = Table('memberdata', metadata, Column('CODE2',ForeignKey('memberbase.CODE2'), 
+	primary_key = True ), extend_existing=True, autoload_with=engine)
+			
+base.prepare(engine,reflect=True )
 
 tabledict = {}
 
@@ -100,12 +114,9 @@ tablenames = []
 tablenames = base.classes.keys()
 tabledict = { x: base.classes[x] for x in tablenames }
 
-#tablenames is used to populate menu, shouldn't have direct access
-tablenames= [x for x in tablenames if x not in ['memberbase','health','demographic']]
-
-#we're going to want to be able to reference this.
-MEMBERBASE = base.classes['memberbase'] 
-
+#tablenames is used to populate menu, shouldn't have direct access to member or health data
+tablenames = [name for name in tablenames if name.startswith('MCM')]
+memberbase = base.classes['memberbase']
 #set this in the app, it wants a space seperated list because suddenly we're in bash?
 tables.set(' '.join(sorted(tablenames)))
 
@@ -176,7 +187,7 @@ class Application(Frame):
 		# inside the 'members' frame (inside the 'constraints' frame)
 		self.members = Frame(self.constraints,borderwidth=1)
 		self.constrainmembers = IntVar() #constrain by characteristics of members?
-		self.constrainmembersButton = Checkbutton(self.members,variable=self.constrainmembers,command=self.MEMBERBASE_selectors,text="Constrain selection by MEMBERBASE characteristics")
+		self.constrainmembersButton = Checkbutton(self.members,variable=self.constrainmembers,command=self.memberdata_selectors,text="Constrain selection by memberdata characteristics")
 		self.constrainmembersButton.grid(column=0,sticky=W)
 		self.members.grid(column=0,sticky=W)
 		self.m_selectors = [] #which member char., which value?
@@ -195,7 +206,7 @@ class Application(Frame):
 				
 	def selectPreDef(self,subject):
 		tablesdict=self.matrix[subject]
-		self.MEMBERBASE_selectors()
+		self.memberdata_selectors()
 		self.EXPORT.grid(column=1,row=0)
 		self.constraints.grid(column=1,row=1)
 		
@@ -218,21 +229,20 @@ class Application(Frame):
 	def add_mb_selector(self):
 		self.selectors_count +=1
 		self.m_s_button.grid_forget()
-		self.MEMBERBASE_selectors()
+		self.memberdata_selectors()
 
-	def MEMBERBASE_selectors(self) :
+	def memberdata_selectors(self) :
 		cur_row = self.selectors_count + 4
 		if self.constrainmembers.get() :
-			
 			varname = StringVar()
 			self.membercols = Frame(self.members,borderwidth=1)
-			self.m_s_var = OptionMenu(self.membercols,varname,*joined_memberdata.selectable.c.keys())
+			self.m_s_var = OptionMenu(self.membercols,varname,*memberdata.columns.keys())
 
-			#todo: assign *MEMBERBASE.__table__.columns.keys() to a var and remove one 
+			#todo: assign *memberdata.__table__.columns.keys() to a var and remove one 
 			#every time it's used, since we can probably only assign var once
 			self.m_s_var.grid(row=cur_row,column=1)
 			self.m_s_entry = Entry(self.membercols)
-			##todo: should be a dropdown using MEMBERBASE.__table__.columns[key].type once key is selected
+			##todo: should be a dropdown using memberdata.__table__.columns[key].type once key is selected
 			self.m_s_entry.grid(row=cur_row,column=2)
 			self.m_s_button = Button(self.membercols,text="add another",command=self.add_mb_selector)
 			self.m_s_button.grid(row=cur_row,column=3)
@@ -250,7 +260,7 @@ class Application(Frame):
 
 	def add_mb_selector(self):
 		self.selectors_count +=1
-		self.MEMBERBASE_selectors()
+		self.memberdata_selectors()
 		
 	#~ def update_widget(self, options, labeltext):
 		#~ ttk.Label(self.tables, text=labeltext)
@@ -301,11 +311,12 @@ class Application(Frame):
 		#~ self.SELECT.grid_forget()
 		#~ self.optiontext.grid_forget()
 		#~ self.EXPORT.grid(column=0)
-		self.MEMBERBASE_selectors()
+		self.memberdata_selectors()
 		
 	def file_save_as(self):
+		#~ pdb.set_trace()
 		if debug == True:
-			f = '/home/mcmadmin/development/output/out.xlsx'
+			f = homedir + '/Desktop/out.xlsx'
 			return f
 		
 		f = asksaveasfilename(defaultextension='.xlsx',initialdir=desktopdir)
@@ -349,7 +360,6 @@ def matrix():
 def export(f):
 	global selected_tables
 	presets = App.presets.winfo_ismapped()
-	pdb.set_trace()
 	member_filter = App.constrainmembers.get() 
 	Inner = App.inner.get()
 	Joint = App.joint.get()
@@ -379,11 +389,16 @@ def export(f):
 
 
 		if not Joint: 
-			filtered_members=session.query(MEMBERBASE.CODE2)
+			pdb.set_trace()
+			filtered_members=session.query(memberbase.CODE2)
 			if member_filter :
 				filtered_members = qfilter()
 			if Inner :
-				filtered_members = filtered_members.join(*selected_tables)
+				try :
+					filtered_members = filtered_members.join(*selected_tables)
+				except Exception, e:
+					pdb.set_trace()
+					logging.error(e)
 			if presets :
 				selected_tables = preset_columns
 			for table in selected_tables:
@@ -471,11 +486,11 @@ def qpreset():
 
 def qfilter():
 	filter_dict = {}
-	pdb.set_trace()
-	query = session.query()
+
 	for i in App.m_selectors:
 		try : 
 			key = i[0].get()
+			#~ key = memberdata.columns.get(key)
 			if key == '' :
 				key = None
 				continue
@@ -485,16 +500,25 @@ def qfilter():
 			value = i[1].get()
 		except:
 			continue
-		filter_dict[key] = value
+		filter_dict[str(key)] = value
+	pdb.set_trace()
 	try :
-		query = query.filter_by(**filter_dict)
+		query = session.query(memberbase.CODE2).union(session.query(memberdata.c.CODE2).filter_by().params(**filter_dict))
 	except Exception, e:
-		logging.warn("line %s: error %s" % (line_no(),e))
+		pdb.set_trace()
+		logging.warn("%s error: %s" % (line_no(), e))
 		#~ pdb.set_trace()
-		# for like, >,< use  getattr(MEMBERBASE,key)
+		# for like, >,< use  getattr(memberdata,key)
+	try :
+		query.first()
+	except Except, e:
+		
+		pdb.set_trace()
+		print "nothing in this query whoops"
 	return query
 			
 def qjoin(db_tables, inner):
+	pdb.set_trace()
 	tables = db_tables[:]
 	firsttable = tables.pop(0)
 	query = session.query(firsttable,*tables)
@@ -516,11 +540,9 @@ def qjoin(db_tables, inner):
 
 session = Session(engine)
 
-## session.query(MEMBERBASE).filter(MEMBERBASE.BIRTHYEAR >= 1980).one()
+## session.query(memberdata).filter(memberdata.BIRTHYEAR >= 1980).one()
 
 q = session.query()
-pdb.set_trace()
-joined_memberdata = session.query(MEMBERBASE,base.classes['demographic']).join(base.classes['demographic'],base.classes['demographic'].CODE2==MEMBERBASE.CODE2)
 App = Application(master=root)
 App.mainloop()
 
