@@ -307,14 +307,14 @@ class Application(Frame):
 			tkMessageBox.showinfo("Alert","It is very rarely desired to have merged datasets containg all data ('FULL OUTER JOIN').  If you are certain this is what you want, please contact the database adminstrator.") 
 		
 	def selected_options(self):
-		#~ pdb.set_trace()
+		#~ ()
 		#~ self.SELECT.grid_forget()
 		#~ self.optiontext.grid_forget()
 		#~ self.EXPORT.grid(column=0)
 		self.memberdata_selectors()
 		
 	def file_save_as(self):
-		#~ pdb.set_trace()
+		#~ ()
 		if debug == True:
 			f = homedir + '/Desktop/out.xlsx'
 			return f
@@ -371,7 +371,6 @@ def export(f):
 	if presets :
 		# probably we want individual sheets w/ records on them?
 		preset_columns = qpreset()
-		pdb.set_trace()
 		if preset_columns == "no matches" :
 			tkMessageBox.showinfo("Error","No tables/columns found matching this category") 
 			return 0
@@ -380,7 +379,6 @@ def export(f):
 		success = 0
 		for table, columns in  preset_columns.iteritems():
 			tablequery = session.query().with_entities(*columns)
-			pdb.set_trace()
 			df = read_sql_query(tablequery.statement,engine,index_col="CODE2")
 			df.sort_index(axis=1).to_excel(writer,index='false',sheet_name=table)
 	else :
@@ -389,7 +387,6 @@ def export(f):
 
 
 		if not Joint: 
-			pdb.set_trace()
 			filtered_members=session.query(memberbase.CODE2)
 			if member_filter :
 				filtered_members = qfilter()
@@ -397,7 +394,6 @@ def export(f):
 				try :
 					filtered_members = filtered_members.join(*selected_tables)
 				except Exception, e:
-					pdb.set_trace()
 					logging.error(e)
 			if presets :
 				selected_tables = preset_columns
@@ -486,7 +482,7 @@ def qpreset():
 
 def qfilter():
 	filter_dict = {}
-
+	Memberdata = base.classes.memberdata
 	for i in App.m_selectors:
 		try : 
 			key = i[0].get()
@@ -501,24 +497,22 @@ def qfilter():
 		except:
 			continue
 		filter_dict[str(key)] = value
-	pdb.set_trace()
 	try :
-		query = session.query(memberbase.CODE2).union(session.query(memberdata.c.CODE2).filter_by().params(**filter_dict))
+		filtered = session.query(Memberdata.CODE2).filter_by(**filter_dict)
+		query =  session.query(memberbase.CODE2).filter(memberbase.CODE2.in_(filtered))
 	except Exception, e:
-		pdb.set_trace()
 		logging.warn("%s error: %s" % (line_no(), e))
-		#~ pdb.set_trace()
+		pdb.set_trace()
 		# for like, >,< use  getattr(memberdata,key)
 	try :
 		query.first()
-	except Except, e:
-		
-		pdb.set_trace()
+	except Exception, e:
+		logging.warn("%s error: %s" % (line_no(), e))
+		#~ pdb.set_trace()
 		print "nothing in this query whoops"
 	return query
 			
 def qjoin(db_tables, inner):
-	pdb.set_trace()
 	tables = db_tables[:]
 	firsttable = tables.pop(0)
 	query = session.query(firsttable,*tables)
